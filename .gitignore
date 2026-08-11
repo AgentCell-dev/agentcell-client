@@ -1,0 +1,16 @@
+/.cache/
+/dist/
+/agentcell
+
+# THREE DEAD FILES, kept on disk and out of history [11 August 2026, with the repository split].
+# verification/{archive,cli-output,mcp-stream}-overlay.json are leftovers from an earlier
+# `go test -overlay` approach that mutant_checks.sh no longer uses — it copies fixtures into place
+# and selects them with `-tags` instead. Verified unused: nothing in the tree passes `-overlay` or
+# names these files.
+#
+# They are ignored rather than deleted because this tree had no history until today, so the working
+# copy is the only record and deleting is the one edit that loses information. They are ignored
+# rather than committed because each one hard-codes `/Users/akmo/agentcell/...`, and putting one
+# operator's home directory into a PUBLIC repository's permanent history to preserve a file nothing
+# reads is a bad trade in both directions.
+/verification/*-overlay.json

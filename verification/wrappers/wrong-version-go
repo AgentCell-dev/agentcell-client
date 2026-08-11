@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+if test "${1-}" = env && test "${2-}" = GOVERSION; then
+  echo go1.25.4
+  exit 0
+fi
+exec "${REAL_GO:?}" "$@"

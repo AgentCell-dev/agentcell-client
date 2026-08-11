@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+"${REAL_GO:?}" "$@"
+previous=''
+output=''
+for argument in "$@"; do
+  if test "$previous" = '-o'; then output=$argument; fi
+  previous=$argument
+done
+case "$output" in *.two) printf x >> "$output";; esac
+

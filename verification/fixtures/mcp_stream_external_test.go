@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/agentcell/agentcell-client/contract"
+	"github.com/AgentCell-dev/agentcell-client/contract"
 )
 
 type blockingLogOperations struct {

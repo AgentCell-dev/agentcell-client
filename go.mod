@@ -1,4 +1,4 @@
-module github.com/agentcell/agentcell-client
+module github.com/AgentCell-dev/agentcell-client
 
 go 1.25
 

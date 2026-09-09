@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/agentcell/agentcell-client/contract"
-	archivepkg "github.com/agentcell/agentcell-client/internal/archive"
+	"github.com/AgentCell-dev/agentcell-client/contract"
+	archivepkg "github.com/AgentCell-dev/agentcell-client/internal/archive"
 )
 
 type Command struct {

@@ -7,11 +7,11 @@ import (
 	"os"
 	"strings"
 
-	"github.com/agentcell/agentcell-client/contract"
-	"github.com/agentcell/agentcell-client/internal/cli"
-	"github.com/agentcell/agentcell-client/internal/mcp"
-	"github.com/agentcell/agentcell-client/operations"
-	"github.com/agentcell/agentcell-client/token"
+	"github.com/AgentCell-dev/agentcell-client/contract"
+	"github.com/AgentCell-dev/agentcell-client/internal/cli"
+	"github.com/AgentCell-dev/agentcell-client/internal/mcp"
+	"github.com/AgentCell-dev/agentcell-client/operations"
+	"github.com/AgentCell-dev/agentcell-client/token"
 )
 
 var version = "dev"

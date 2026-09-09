@@ -8,7 +8,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/agentcell/agentcell-client/contract"
+	"github.com/AgentCell-dev/agentcell-client/contract"
 )
 
 type outputOperations struct{}

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/agentcell/agentcell-client/contract"
+	"github.com/AgentCell-dev/agentcell-client/contract"
 )
 
 func TestDeployCarriesVersionTokenAndIdempotencyKey(t *testing.T) {

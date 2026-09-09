@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/agentcell/agentcell-client/contract"
-	"github.com/agentcell/agentcell-client/operations"
+	"github.com/AgentCell-dev/agentcell-client/contract"
+	"github.com/AgentCell-dev/agentcell-client/operations"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

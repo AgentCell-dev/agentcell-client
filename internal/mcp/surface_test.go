@@ -4,8 +4,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/agentcell/agentcell-client/contract"
-	"github.com/agentcell/agentcell-client/internal/cli"
+	"github.com/AgentCell-dev/agentcell-client/contract"
+	"github.com/AgentCell-dev/agentcell-client/internal/cli"
 )
 
 type probeRequest struct {

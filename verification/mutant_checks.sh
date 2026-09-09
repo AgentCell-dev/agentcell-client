@@ -30,14 +30,14 @@ echo "--- version-header mutant: remove header from every request ---"
 cp -R "$base" "$tmp/header-client"
 cp -R "$verifier" "$tmp/header-verifier"
 perl -0pi -e 's/\n\thttpRequest\.Header\.Set\(contract\.APIVersionHeader, contract\.APIVersion\)//' "$tmp/header-client/operations/http.go"
-(cd "$tmp/header-verifier" && go mod edit -replace "github.com/agentcell/agentcell-client=$tmp/header-client")
+(cd "$tmp/header-verifier" && go mod edit -replace "github.com/AgentCell-dev/agentcell-client=$tmp/header-client")
 expect_failure header 'version header = ""' sh -c "cd '$tmp/header-verifier' && go test -run TestEveryNonStreamingRequestCarriesVersionAndTypedBody -count=1"
 
 echo "--- streaming mutant: buffer the complete response before scanning ---"
 cp -R "$base" "$tmp/stream-client"
 cp -R "$verifier" "$tmp/stream-verifier"
 perl -0pi -e 's/\n\tscanner := bufio\.NewScanner\(response\.Body\)/\n\tall, _ := io.ReadAll(response.Body)\n\tresponse.Body = io.NopCloser(bytes.NewReader(all))\n\tscanner := bufio.NewScanner(response.Body)/' "$tmp/stream-client/operations/http.go"
-(cd "$tmp/stream-verifier" && go mod edit -replace "github.com/agentcell/agentcell-client=$tmp/stream-client")
+(cd "$tmp/stream-verifier" && go mod edit -replace "github.com/AgentCell-dev/agentcell-client=$tmp/stream-client")
 expect_failure streaming 'first log was buffered' sh -c "cd '$tmp/stream-verifier' && go test -run TestLogsEmitsFirstRecordBeforeFinalRecordExists -count=1 -timeout=5s"
 
 echo "--- archive mutant: preserve source mtimes ---"

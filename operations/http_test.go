@@ -68,3 +68,28 @@ func jsonResponse(status int, version string, value any) *http.Response {
 	header.Set(contract.APIVersionHeader, version)
 	return &http.Response{StatusCode: status, Header: header, Body: io.NopCloser(strings.NewReader(string(b)))}
 }
+
+// A deploy asks Expect: 100-continue and nothing else does. See expectContinueTimeout.
+func TestOnlyDeployAsksToContinue(t *testing.T) {
+	seen := map[string]string{}
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		seen[r.URL.Path] = r.Header.Get("Expect")
+		if strings.HasSuffix(r.URL.Path, "/deploy") {
+			return jsonResponse(http.StatusOK, contract.APIVersion, contract.DeployResponse{CellID: "cell-1"}), nil
+		}
+		return jsonResponse(http.StatusOK, contract.APIVersion, contract.PSResponse{}), nil
+	})
+	client := &HTTPClient{BaseURL: "https://api.example", Token: "t", Client: &http.Client{Transport: transport}}
+	if _, err := client.Execute(context.Background(), &contract.DeployRequest{IdempotencyKey: "deploy-v1:d"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Execute(context.Background(), &contract.PSRequest{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := seen["/v1/operations/deploy"]; got != "100-continue" {
+		t.Errorf("deploy Expect=%q, want 100-continue", got)
+	}
+	if got := seen["/v1/operations/ps"]; got != "" {
+		t.Errorf("ps Expect=%q, want none", got)
+	}
+}

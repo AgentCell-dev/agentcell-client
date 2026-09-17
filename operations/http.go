@@ -10,9 +10,26 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/AgentCell-dev/agentcell-client/contract"
 )
+
+// expectContinueTimeout bounds how long a deploy waits for the service to invite the upload.
+//
+// A deploy asks `Expect: 100-continue`, so a refusal (a bad token, a read-only one, a rate limit)
+// arrives as a typed response before the archive is sent. Without it the service refuses before
+// reading, closes, and the client saw either the typed error or "connection reset by peer"
+// depending on timing: 6 of 20 real 24 MB deploys with a bad token got the reset. The service
+// answers 100 only after its authentication, which can include a database round trip, so this is
+// generous; if it elapses, Go sends the body anyway, which is exactly the behaviour before.
+const expectContinueTimeout = 30 * time.Second
+
+var defaultClient = func() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.ExpectContinueTimeout = expectContinueTimeout
+	return &http.Client{Transport: transport}
+}()
 
 type HTTPClient struct {
 	BaseURL string
@@ -94,10 +111,12 @@ func (c *HTTPClient) do(ctx context.Context, definition contract.Definition, req
 	httpRequest.Header.Set("Authorization", "Bearer "+c.Token)
 	if deploy, ok := request.(*contract.DeployRequest); ok {
 		httpRequest.Header.Set("Idempotency-Key", deploy.IdempotencyKey)
+		// The one request whose body is large enough to matter; see expectContinueTimeout.
+		httpRequest.Header.Set("Expect", "100-continue")
 	}
 	client := c.Client
 	if client == nil {
-		client = http.DefaultClient
+		client = defaultClient
 	}
 	response, err := client.Do(httpRequest)
 	if err != nil {

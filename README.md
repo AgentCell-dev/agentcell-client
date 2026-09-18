@@ -12,6 +12,16 @@ When stdout is a terminal output is human-readable; otherwise it is JSON. `--out
 overrides detection. `logs` is the one streaming operation and emits one JSON object per line in
 machine mode.
 
+## Credentials and the harness
+
+Two credentials open two different doors — an API token (`deploy`/`read`/
+`secrets`/`admin`) goes to the control plane, a `cells`-scoped token goes to
+a cell hostname and is verified by the auth Worker. They are not
+interchangeable. See `docs/credentials.md` for which is which and how to get
+each, and `docs/mcp-harness.md` for configuring a real coding harness against
+`agentcell mcp` (config snippet, the 11-tool surface, and the standing
+deploy-and-logs round-trip proof).
+
 ## Contract and implementation boundary
 
 `contract.Definitions` is the only verb declaration. Each entry has its name, summary, concrete Go

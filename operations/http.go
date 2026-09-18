@@ -25,6 +25,30 @@ import (
 // generous; if it elapses, Go sends the body anyway, which is exactly the behaviour before.
 const expectContinueTimeout = 30 * time.Second
 
+// DefaultBaseURL is where the CLI and the MCP server look for the control plane when nothing says
+// otherwise: the public hostname, reachable from any machine on the internet.
+//
+// It is here rather than in cmd/agentcell so there is ONE of it. Every caller that builds an
+// HTTPClient — the CLI, the MCP server, and whatever embeds this package next — gets the same
+// answer, and a second copy written into a second entry point is the drift that makes `agentcell`
+// and `agentcell mcp` talk to different services.
+//
+// WHY A PUBLIC HOSTNAME IS THE DEFAULT AND AN OVERLAY ADDRESS IS NOT. Until now the default named
+// a host on a Tailscale network that no customer is on, so the honest description of this client
+// was that it worked for the operator. A design partner running a coding session has no tailnet
+// and cannot be given one; the default has to be the door they can reach.
+//
+// THE OVERLAY IS STILL SELECTABLE, and that is deliberate rather than a leftover: AGENTCELL_API_URL
+// in the environment and --api-url= on the command line both override this, which is how an
+// operator reaches the service directly when the public path is the thing that is broken. That
+// ordering — flag, then environment, then this — is in cmd/agentcell.
+//
+// NOTHING ABOUT AUTHENTICATION CHANGES WITH THE ROUTE. There is no browser gate on this hostname;
+// the service authenticates the bearer token itself and answers a typed {code, message, hint}
+// either way, which is why the same client code works over both and why an agent driving it can
+// still branch on the code.
+const DefaultBaseURL = "https://api.agentcell.cloud"
+
 var defaultClient = func() *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.ExpectContinueTimeout = expectContinueTimeout

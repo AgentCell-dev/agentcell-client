@@ -16,7 +16,7 @@ Claude Code (`claude mcp add-json`), or any client accepting an MCP stdio map:
       "command": "/path/to/agentcell",
       "args": ["mcp"],
       "env": {
-        "AGENTCELL_API_URL": "http://100.122.58.11:4680",
+        "AGENTCELL_API_URL": "<the control-plane URL you were given>",
         "AGENTCELL_TOKEN": "act_<prefix>_<secret>"
       }
     }

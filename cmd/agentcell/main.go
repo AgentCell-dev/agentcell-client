@@ -26,7 +26,11 @@ func run() int {
 	}
 	baseURL := os.Getenv("AGENTCELL_API_URL")
 	if baseURL == "" {
-		baseURL = "https://api.agentcell.dev"
+		// From operations, not written here. The literal this replaced was `api.agentcell.dev`,
+		// which is a different registrable domain from the one the platform serves and had no
+		// route behind it at all — so the shipped default reached nothing, and every working
+		// invocation was one that set AGENTCELL_API_URL or --api-url.
+		baseURL = operations.DefaultBaseURL
 	}
 	for i := 0; i < len(args); i++ {
 		if strings.HasPrefix(args[i], "--api-url=") {

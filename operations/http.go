@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
 	"time"
@@ -115,10 +116,59 @@ func (c *HTTPClient) Stream(ctx context.Context, request contract.Request, emit 
 	return nil
 }
 
+// tailnetRange is the CGNAT block Tailscale assigns overlay addresses from (100.64.0.0/10).
+var tailnetRange = netip.MustParsePrefix("100.64.0.0/10")
+
+// checkBaseURL refuses to send a bearer token in clear text to anywhere it could be read.
+//
+// THE TOKEN IS THE WHOLE CREDENTIAL. It is presented on every request, it is not bound to a
+// session, and over plaintext it is readable by anything between here and the service — after
+// which it deploys, reads logs and, with the right scope, changes who can reach a cell. Now that
+// the default base URL is a public hostname, an operator who overrides it is overriding it to
+// something, and `http://` is one keystroke away from `https://`.
+//
+// TWO EXCEPTIONS, AND BOTH ARE ADDRESSES THAT CANNOT LEAVE A TRUSTED PATH. The overlay is a
+// WireGuard mesh: traffic to 100.64.0.0/10 is encrypted and authenticated by Tailscale before it
+// reaches a wire, so plaintext HTTP inside it is not plaintext on any network — and this is the
+// path operators use to reach the control plane directly when the public one is what is broken.
+// Loopback is the test and development case and never crosses a network at all.
+//
+// A NAME IS NOT ENOUGH, deliberately: `cp-1.example.com` may resolve into the tailnet today and
+// somewhere else tomorrow, and this check would then be approving a route it cannot see. Only a
+// literal address in those ranges, or `localhost`, is accepted.
+func checkBaseURL(base *url.URL) error {
+	switch base.Scheme {
+	case "https":
+		return nil
+	case "http":
+	default:
+		return &contract.APIError{Code: contract.CodeUsage, Message: "the API URL must be an https URL", Hint: "set AGENTCELL_API_URL or --api-url= to an https:// address"}
+	}
+	host := base.Hostname()
+	if host == "localhost" {
+		return nil
+	}
+	if address, err := netip.ParseAddr(host); err == nil {
+		if address.IsLoopback() || tailnetRange.Contains(address) {
+			return nil
+		}
+	}
+	return &contract.APIError{
+		Code:    contract.CodeUsage,
+		Message: "refusing to send your API token over plain HTTP to " + host,
+		Hint:    "Use https://. Plain HTTP is accepted only for a Tailscale overlay address (100.64.0.0/10) or loopback, where the transport is already encrypted; your token is presented on every request and is readable by anything in between.",
+	}
+}
+
 func (c *HTTPClient) do(ctx context.Context, definition contract.Definition, request contract.Request) (*http.Response, error) {
 	base, err := url.Parse(c.BaseURL)
 	if err != nil {
 		return nil, &contract.APIError{Code: contract.CodeUsage, Message: "invalid API URL", Hint: "set AGENTCELL_API_URL to an https URL"}
+	}
+	// Before the request is built, so the token is never written into anything that could be
+	// sent. A refusal here has not touched the network.
+	if err := checkBaseURL(base); err != nil {
+		return nil, err
 	}
 	base.Path = strings.TrimRight(base.Path, "/") + "/v1/operations/" + definition.Name
 	body, err := json.Marshal(request)

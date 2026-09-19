@@ -116,8 +116,28 @@ func (c *HTTPClient) Stream(ctx context.Context, request contract.Request, emit 
 	return nil
 }
 
-// tailnetRange is the CGNAT block Tailscale assigns overlay addresses from (100.64.0.0/10).
-var tailnetRange = netip.MustParsePrefix("100.64.0.0/10")
+// tailnetRanges are the blocks Tailscale assigns overlay addresses from: the CGNAT block for IPv4
+// and the fd7a:115c:a1e0::/48 ULA for IPv6.
+//
+// THE IPv6 HALF WAS MISSING AND THAT IS NOT A THEORETICAL GAP. Every unit on this platform has
+// both; `tailscale status` shows a 100.x address and an fd7a:115c:a1e0:: address for each. An
+// operator who reached the control plane over IPv6 -- which is what happens the moment a hostname
+// resolves to the ULA, or somebody pastes the address the admin console shows -- would have been
+// told to use https for a destination already inside the WireGuard mesh, on the exact path this
+// exemption exists to allow.
+var tailnetRanges = []netip.Prefix{
+	netip.MustParsePrefix("100.64.0.0/10"),
+	netip.MustParsePrefix("fd7a:115c:a1e0::/48"),
+}
+
+func inTailnet(address netip.Addr) bool {
+	for _, prefix := range tailnetRanges {
+		if prefix.Contains(address) {
+			return true
+		}
+	}
+	return false
+}
 
 // checkBaseURL refuses to send a bearer token in clear text to anywhere it could be read.
 //
@@ -149,14 +169,14 @@ func checkBaseURL(base *url.URL) error {
 		return nil
 	}
 	if address, err := netip.ParseAddr(host); err == nil {
-		if address.IsLoopback() || tailnetRange.Contains(address) {
+		if address.IsLoopback() || inTailnet(address) {
 			return nil
 		}
 	}
 	return &contract.APIError{
 		Code:    contract.CodeUsage,
 		Message: "refusing to send your API token over plain HTTP to " + host,
-		Hint:    "Use https://. Plain HTTP is accepted only for a Tailscale overlay address (100.64.0.0/10) or loopback, where the transport is already encrypted; your token is presented on every request and is readable by anything in between.",
+		Hint:    "Use https://. Plain HTTP is accepted only for a Tailscale overlay address (100.64.0.0/10 or fd7a:115c:a1e0::/48) or loopback, where the transport is already encrypted; your token is presented on every request and is readable by anything in between.",
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -70,7 +71,7 @@ func (c *HTTPClient) Execute(ctx context.Context, request contract.Request) (con
 	if definition.Streaming {
 		return nil, &contract.APIError{Code: contract.CodeUsage, Message: "streaming operation used as request/response", Hint: "use Operations.Stream"}
 	}
-	response, err := c.do(ctx, definition, request)
+	response, err := c.doWithRetry(ctx, definition, request)
 	if err != nil {
 		return nil, err
 	}
@@ -178,6 +179,104 @@ func checkBaseURL(base *url.URL) error {
 		Message: "refusing to send your API token over plain HTTP to " + host,
 		Hint:    "Use https://. Plain HTTP is accepted only for a Tailscale overlay address (100.64.0.0/10 or fd7a:115c:a1e0::/48) or loopback, where the transport is already encrypted; your token is presented on every request and is readable by anything in between.",
 	}
+}
+
+// How hard the client tries when the service says it is busy. See doWithRetry.
+const (
+	busyRetries  = 2
+	busyMaxWait  = 15 * time.Second
+	busyMaxSleep = 10 * time.Second
+)
+
+// doWithRetry re-sends a request the service refused for being BUSY, once the service says it is
+// worth trying again.
+//
+// WHY THIS IS NEEDED AND WHAT IT IS NOT. The control plane bounds several things and refuses
+// rather than queues when it hits one: concurrent authentications, connections, deploys. Those
+// refusals are `service_unavailable` with a `Retry-After`, and they are DELIBERATELY not errors
+// about the request — the same request a moment later succeeds. Until now this client surfaced
+// them straight to the caller, so a perfectly good deploy failed because something else was busy.
+//
+// THE CASE THAT FORCED IT [observed on cp-1, 19 September 2026]. A token the service has never
+// seen queues at a narrow door until its first lookup completes. An agent fires several tool calls
+// at once — Claude Code does exactly this — so the FIRST parallel burst on a new token has every
+// request carrying an unknown prefix, and some are refused. One sequential call would have warmed
+// it; an agent does not know that and should not have to. With this retry the partner sees a pause
+// and then their answer.
+//
+// ONLY ON A TYPED `service_unavailable` CARRYING Retry-After. A bare 503, an HTML page from an
+// intermediary, or any other code is surfaced unchanged: this client must not turn "the service is
+// down" into three times as many requests, and a refusal with no Retry-After is not this service
+// saying come back.
+//
+// SAFE BY CONSTRUCTION FOR EVERY OPERATION IT COVERS. `deploy` carries an Idempotency-Key, which is
+// a hash of the source, so a re-send is the same deploy and the service answers the first one's
+// result rather than building twice. Everything else Execute handles is a read or a refusal.
+// STREAMS ARE EXCLUDED — Stream calls `do` directly — because a stream hands records to a callback
+// the caller may already have acted on, so resuming one is a question about timestamps rather than
+// a re-send; contract/errors.go already says so in its hint.
+//
+// THE TOTAL WAIT IS CAPPED so a busy service cannot hold a CLI session open indefinitely, and each
+// sleep is cancellable: an operator pressing ctrl-C during a retry must be obeyed.
+func (c *HTTPClient) doWithRetry(ctx context.Context, definition contract.Definition, request contract.Request) (*http.Response, error) {
+	var waited time.Duration
+	for attempt := 0; ; attempt++ {
+		response, err := c.do(ctx, definition, request)
+		if err != nil {
+			return nil, err
+		}
+		if attempt >= busyRetries {
+			return response, nil
+		}
+		delay, retryable := busyRetryAfter(response)
+		if !retryable || waited+delay > busyMaxWait {
+			return response, nil
+		}
+		// The body was read to classify it and is of no further use: this response is being
+		// replaced, not returned.
+		response.Body.Close()
+		waited += delay
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, &contract.APIError{Code: contract.CodeTransport, Message: "cancelled while waiting to retry", Hint: "the service asked for a retry after " + delay.String()}
+		case <-timer.C:
+		}
+	}
+}
+
+// busyRetryAfter reports whether this response is the service asking to be retried, and when.
+//
+// It CONSUMES AND RESTORES the body, because the decision needs the typed code and the caller
+// needs the bytes: a response that turns out not to be retryable must reach decodeError exactly as
+// it arrived, hint included. The read is bounded — a typed error is a few hundred bytes, and this
+// must not buffer a large body just to decide not to retry it.
+func busyRetryAfter(response *http.Response) (time.Duration, bool) {
+	if response.StatusCode != http.StatusServiceUnavailable {
+		return 0, false
+	}
+	raw, err := io.ReadAll(io.LimitReader(response.Body, 1<<16))
+	response.Body.Close()
+	response.Body = io.NopCloser(bytes.NewReader(raw))
+	if err != nil {
+		return 0, false
+	}
+	var api contract.APIError
+	if json.Unmarshal(raw, &api) != nil || api.Code != contract.CodeService {
+		return 0, false
+	}
+	seconds, err := strconv.Atoi(strings.TrimSpace(response.Header.Get("Retry-After")))
+	if err != nil || seconds < 0 {
+		// Only the delta-seconds form. This service sends an integer; an HTTP-date would mean the
+		// response came from something else, which is not a thing to retry against.
+		return 0, false
+	}
+	delay := time.Duration(seconds) * time.Second
+	if delay > busyMaxSleep {
+		return 0, false
+	}
+	return delay, true
 }
 
 func (c *HTTPClient) do(ctx context.Context, definition contract.Definition, request contract.Request) (*http.Response, error) {

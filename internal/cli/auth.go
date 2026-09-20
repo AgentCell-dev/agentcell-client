@@ -23,6 +23,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"os/exec"
 	"runtime"
 	"strconv"
@@ -91,7 +92,10 @@ type AuthConfig struct {
 	HTTPClient *http.Client // nil uses http.DefaultClient
 
 	NoBrowser bool // --no-browser: always use the device path
-	IsTTY     bool // false (no TTY): always use the device path, same as SIGNUP.md §5
+	IsTTY     bool // only shapes messages; flow selection is BrowserReachable, not the TTY
+	// BrowserReachable answers whether the loopback flow can open a browser from here. nil uses
+	// defaultBrowserReachable (an opener on PATH, and a display where one is needed). Tests inject.
+	BrowserReachable func() bool
 
 	// OpenBrowser is called with the /v1/auth/start URL. nil uses the platform opener. An error
 	// (including "no opener on this platform") does not abort the loopback flow -- the URL is
@@ -173,9 +177,14 @@ func WhoamiText(w *WhoamiResult) string {
 // Login
 // ---------------------------------------------------------------------------------------------
 
-// Login runs the loopback flow by default, and the device flow when cfg.NoBrowser is set or
-// cfg.IsTTY is false (SIGNUP.md §5: "--no-browser (and any TTY without a browser: SSH sessions,
-// containers) switches to the device path").
+// Login runs the loopback flow by default, and the device flow when cfg.NoBrowser is set or no
+// browser can be opened from this process (SIGNUP.md §5). WHETHER STDIN IS A TERMINAL IS NOT THE
+// QUESTION: the first fresh-session test (20 September 2026) ran `agentcell login` from a coding
+// agent's shell, which is never a TTY, on a Mac with a browser one `open` away -- and was sent to
+// the device path and asked to type a code, which is exactly the step that flow exists to avoid
+// when a browser is at hand. The question is whether an opener exists and a display is reachable:
+// over SSH with no display, or in a container with no opener, the device path is right; on a
+// desktop, whatever is driving the shell, the browser opens and the person only picks an account.
 func Login(ctx context.Context, cfg AuthConfig) (*LoginResult, *AuthError) {
 	// THE LOGIN BASE NEVER GOES THROUGH doJSON -- the loopback flow only ever OPENS it in a
 	// browser (there is no bearer to leak on that particular request, since none exists yet),
@@ -186,7 +195,11 @@ func Login(ctx context.Context, cfg AuthConfig) (*LoginResult, *AuthError) {
 	if apiErr := checkBase(cfg.LoginBaseURL); apiErr != nil {
 		return nil, apiErr
 	}
-	if cfg.NoBrowser || !cfg.IsTTY {
+	reachable := cfg.BrowserReachable
+	if reachable == nil {
+		reachable = defaultBrowserReachable
+	}
+	if cfg.NoBrowser || !reachable() {
 		return loginDevice(ctx, cfg)
 	}
 	return loginLoopback(ctx, cfg)
@@ -584,6 +597,28 @@ func decodeAuthResponse(resp *http.Response, bearer string, out any) *AuthError 
 // The platform browser opener. Best-effort: if the platform has no known opener, or launching it
 // fails, loginLoopback prints the URL instead of aborting -- see its call site.
 // ---------------------------------------------------------------------------------------------
+
+// defaultBrowserReachable: the opener this platform uses is on PATH, and -- where a display is a
+// separate thing from the machine -- one is reachable. SSH without a forwarded display is the
+// common "no" on a desktop OS; a container without xdg-open is the common "no" on Linux.
+func defaultBrowserReachable() bool {
+	if os.Getenv("SSH_CONNECTION") != "" && os.Getenv("DISPLAY") == "" && os.Getenv("WAYLAND_DISPLAY") == "" && runtime.GOOS != "darwin" {
+		return false
+	}
+	switch runtime.GOOS {
+	case "darwin":
+		_, err := exec.LookPath("open")
+		return err == nil && os.Getenv("SSH_CONNECTION") == ""
+	case "windows":
+		return true
+	default:
+		if os.Getenv("DISPLAY") == "" && os.Getenv("WAYLAND_DISPLAY") == "" {
+			return false
+		}
+		_, err := exec.LookPath("xdg-open")
+		return err == nil
+	}
+}
 
 var defaultOpenBrowser = func(target string) error {
 	var name string

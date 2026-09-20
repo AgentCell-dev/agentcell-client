@@ -395,6 +395,35 @@ func TestRetryAfterAboveCapIsNotHonoured(t *testing.T) {
 	}
 }
 
+// A shell that is not a terminal (every coding agent's shell) must still get the loopback flow
+// when a browser can be opened: the person picks an account and types nothing. Observed failing
+// on the pre-fix client, which chose the device path on !IsTTY and printed a code to type.
+func TestNonTTYStillUsesLoopbackWhenABrowserIsReachable(t *testing.T) {
+	devicePosts := int32(0)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/auth/device", func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&devicePosts, 1)
+		http.Error(w, `{"code":"invalid_request","message":"device flow must not be used here","hint":""}`, 400)
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	opened := make(chan string, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		// The loopback flow waits for the browser; cancel once we have seen it open the URL.
+		<-opened
+		cancel()
+	}()
+	var stderr bytes.Buffer
+	cfg := AuthConfig{APIBaseURL: server.URL, LoginBaseURL: "https://login.example",
+		IsTTY: false, BrowserReachable: func() bool { return true },
+		OpenBrowser: func(target string) error { opened <- target; return nil }, Stderr: &stderr}
+	_, _ = Login(ctx, cfg)
+	if got := atomic.LoadInt32(&devicePosts); got != 0 {
+		t.Fatalf("the device flow was used from a non-TTY shell with a reachable browser (%d device posts); the person would be asked to type a code", got)
+	}
+}
+
 // TestPlaintextPublicBaseIsRefusedWithNoRequestSent is the negative control for the fix folded
 // into doJSON/checkBase: a plain-http base outside the Tailscale overlay and loopback must be
 // refused BEFORE any request is sent, the same property loginLoopback's wrong-state test holds

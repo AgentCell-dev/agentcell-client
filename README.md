@@ -1,11 +1,56 @@
 # AgentCell client
 
-The public, topology-blind AgentCell client. One static Go binary provides the human CLI and the
-agent-facing MCP server. It needs no Docker, Python, or repository checkout at runtime.
+AgentCell runs your web app in its own isolated cell at `https://<cell>.agentcell.cloud`. This is
+the client: one static binary that is both the human CLI and the MCP server for coding agents.
+It needs no Docker, Python, or repository checkout at runtime.
+
+## Get started (three commands)
+
+1. **Install.** Download the binary for your machine from the
+   [latest release](https://github.com/AgentCell-dev/agentcell-client/releases/latest), verify it
+   against `SHA256SUMS`, and put it on your `PATH` as `agentcell`:
+
+   ```sh
+   curl -fsSLO https://github.com/AgentCell-dev/agentcell-client/releases/latest/download/agentcell_0.1.1_darwin_arm64
+   curl -fsSLO https://github.com/AgentCell-dev/agentcell-client/releases/latest/download/SHA256SUMS
+   grep agentcell_0.1.1_darwin_arm64 SHA256SUMS | shasum -a 256 -c -
+   chmod +x agentcell_0.1.1_darwin_arm64 && mv agentcell_0.1.1_darwin_arm64 /usr/local/bin/agentcell
+   ```
+
+   Replace `darwin_arm64` with `darwin_amd64`, `linux_amd64`, `linux_arm64`, or `windows_amd64.exe`.
+   Or, with Go 1.25 installed: `go install github.com/AgentCell-dev/agentcell-client/cmd/agentcell@latest`.
+
+2. **Log in.** This opens your browser; sign in with Google, GitHub, or a one-time PIN sent to your
+   email. Your account and a personal organisation are created on first login.
+
+   ```sh
+   agentcell login
+   ```
+
+   On a machine without a browser, `agentcell login --no-browser` prints a URL and a code to type.
+   Only ever type a code that came from a terminal you are looking at.
+
+3. **Deploy.** From a directory holding a `Dockerfile` (one container, listening on port 8080,
+   with `/data` for anything that must survive a restart):
+
+   ```sh
+   agentcell deploy --cell my-app .
+   ```
+
+   The command prints the URL. `agentcell logs my-app` streams the app's output; `agentcell ps`
+   lists your cells; `agentcell whoami` shows who you are logged in as.
+
+Working examples to start from: [AgentCell-dev/samples](https://github.com/AgentCell-dev/samples)
+(a static site, a notes app on SQLite, a Go service, a Node worker), each a `Dockerfile` and a
+README.
+
+**For coding agents:** `agentcell mcp` is an MCP server over stdio exposing the same operations as
+tools; log in once with `agentcell login` and point your agent's MCP configuration at the binary.
+See `docs/mcp-harness.md`.
 
 ```sh
-AGENTCELL_TOKEN=... agentcell deploy ./my-app
-AGENTCELL_TOKEN=... agentcell mcp
+agentcell deploy --cell my-app ./my-app
+agentcell mcp
 ```
 
 When stdout is a terminal output is human-readable; otherwise it is JSON. `--output=human|json`
@@ -50,9 +95,11 @@ verbs. The MCP server does not weaken this rule despite holding a standing token
   separate `Operations.Stream` method.
 - Tokens: `AGENTCELL_TOKEN` wins. Otherwise the file is under `$XDG_CONFIG_HOME/agentcell`,
   `~/.config/agentcell` on Unix, or the platform config directory on Windows. Pipe an interim token
-  to `agentcell auth token`; it is never accepted as an argument or printed. Storage is behind an
-  interface for a future keychain. OAuth device flow is intentionally not hand-rolled; when issued
-  tokens replace interim SOPS tokens it must use a maintained library.
+  to `agentcell auth token` for a machine credential an operator issued; `agentcell login` stores
+  a personal one the same way. Neither is ever accepted as an argument or printed. Storage is
+  behind an interface for a future keychain. `login` implements the loopback and RFC 8628 device
+  flows against the platform's own `/v1/auth/*` endpoints; identity itself is verified by
+  Cloudflare Access, not by this client.
 - Dependencies: the current client is standard-library-only, so there is no `go.sum` yet. Once a
   module is added, `go.sum` is the required version-and-hash pin; no second hash mechanism is needed.
 

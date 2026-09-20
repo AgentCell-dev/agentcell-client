@@ -1,6 +1,7 @@
 package token
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -44,5 +45,24 @@ func TestEnvironmentPrecedesFile(t *testing.T) {
 	got, err := resolver.Load()
 	if err != nil || got != "environment-token" {
 		t.Fatalf("got %q, %v", got, err)
+	}
+}
+
+// TestDeleteRemovesTheTokenAndIsIdempotent: `agentcell logout` calls Delete unconditionally, even
+// when the server side already dropped the credential (a dead token still clears locally). The
+// second call, on a file that is already gone, must not be an error.
+func TestDeleteRemovesTheTokenAndIsIdempotent(t *testing.T) {
+	store := FileStore{Dir: t.TempDir()}
+	if err := store.Write("file-token"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Delete(); err != nil {
+		t.Fatalf("first delete: %v", err)
+	}
+	if _, err := store.Load(); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("token still loadable after delete: %v", err)
+	}
+	if err := store.Delete(); err != nil {
+		t.Fatalf("second delete on an already-gone file must not error: %v", err)
 	}
 }

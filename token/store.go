@@ -14,6 +14,12 @@ var ErrNotFound = errors.New("agentcell token not found")
 type Store interface {
 	Load() (string, error)
 	Write(string) error
+	// Delete removes a stored credential. It is idempotent: deleting a credential that is
+	// already gone is success, not an error -- `agentcell logout` calls this unconditionally
+	// once the server side is settled, and a logout that fails because it already happened
+	// once is a CLI that cannot clean up after itself (the same argument auth_logout makes
+	// server-side for its own idempotence).
+	Delete() error
 }
 
 type FileStore struct{ Dir string }
@@ -92,6 +98,15 @@ func (s FileStore) Write(value string) error {
 	}
 	if err := os.Chmod(s.path(), 0o600); err != nil {
 		return fmt.Errorf("secure AgentCell credential: %w", err)
+	}
+	return nil
+}
+
+// Delete removes the stored token file. A file that is already gone is not an error: the
+// caller's intent -- "this credential must not be usable from here" -- is already satisfied.
+func (s FileStore) Delete() error {
+	if err := os.Remove(s.path()); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove AgentCell credential: %w", err)
 	}
 	return nil
 }

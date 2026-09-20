@@ -5,6 +5,46 @@ alike on purpose (both are `act_<prefix>_<secret>`, both shown exactly once at
 creation) and they are not interchangeable. Presenting one at the other's door
 fails closed: the control plane answers `unauthenticated`, the Worker refuses.
 
+## Log in
+
+**If you are a person, this is how you get an API token — not the owner
+minting one for you.** Run:
+
+```sh
+agentcell login
+```
+
+This opens your browser to `login.agentcell.cloud`, where Cloudflare Access
+verifies you (Google, GitHub, or a one-time PIN), and the CLI collects and
+stores an API token for you automatically — the token itself never appears
+in the browser, a URL, or your terminal's scrollback. First login creates a
+personal organisation; every login prints `logged in as <email>, org
+<org_id>, plan <plan>`. `agentcell whoami` shows who you are signed in as,
+and `agentcell logout` revokes the credential and removes it locally.
+
+**If your terminal has no browser** — an SSH session, a container, a CI
+runner used interactively — run `agentcell login --no-browser`. The CLI
+prints a short URL and an eight-character code; open that URL on any device
+that does have a browser, sign in there, and type the code. Only typing the
+code binds that sign-in to the machine that asked for it.
+
+**The one thing to know before you type a code on that page**: type a code
+only if it came from a terminal you are looking at yourself. A code somebody
+else sends you and asks you to enter signs THEM in as you, the same way it
+would for `gcloud auth login` or `gh auth login --web` — no link the CLI
+prints can do this on its own, only a person's own typing past the page's
+warning can (SIGNUP.md §8 item 9 records this as a known, unavoidable
+residual of the device-authorization shape, not a defect of this
+implementation).
+
+A plan of `waitlist` means the org is not yet approved to deploy — `login`,
+`whoami`, `ps` and `logs` all work, and `deploy` answers a typed
+`plan_required` refusal until the owner approves the org.
+
+**Machines still use a minted token** (CI runners, agents with no human at
+the keyboard): see §1 below. `agentcell login` is for a person sitting at a
+terminal; nothing mints a self-service token for a process that isn't one.
+
 ## 1. API token — for the control plane
 
 Presented to the **control-plane API** (`AGENTCELL_API_URL`,
@@ -18,8 +58,11 @@ Founding §6.1 is the rule: a deploy token must not read secrets or change
 access lists, so a CI credential stays `deploy` (+ `read` for logs) and
 `secrets`/`admin` tokens live with a human, not in a runner.
 
-How to get one: there is no self-serve issuance. The owner mints it and gives
-you the value once:
+How to get one, as a person: run `agentcell login` (see "Log in" above).
+
+How to get one, as a machine (CI, an agent with no human present): there is
+no self-serve issuance for these — the owner mints it and gives you the
+value once:
 
 ```sh
 make cp-token-issue ORG=<org> SCOPE=deploy   # repeat --scope for more

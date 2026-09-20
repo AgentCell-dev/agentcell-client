@@ -305,7 +305,19 @@ func (c *HTTPClient) do(ctx context.Context, definition contract.Definition, req
 	if deploy, ok := request.(*contract.DeployRequest); ok {
 		httpRequest.Header.Set("Idempotency-Key", deploy.IdempotencyKey)
 		// The one request whose body is large enough to matter; see expectContinueTimeout.
-		httpRequest.Header.Set("Expect", "100-continue")
+		//
+		// ONLY ON THE PLAINTEXT ROUTE. An https base URL is the public hostname behind Cloudflare
+		// (checkBaseURL admits plain http only for the overlay and loopback), and there the ask is
+		// worse than useless, measured 20 September 2026 with frame-level tracing: Go's HTTP/2
+		// transport strips the Expect header (RFC 9113 has no 100-continue) but still holds the
+		// body back for ExpectContinueTimeout; Cloudflare, seeing headers and no body, resets the
+		// stream after 15 s with PROTOCOL_ERROR; Go treats a reset before any body was sent as
+		// retryable and opens a new connection -- and the 30 s timer never gets to fire. Every
+		// public deploy hung forever (the first was the MCP harness, 50 minutes). On the overlay
+		// the service itself answers the 100 or the typed refusal, which is what the ask is for.
+		if base.Scheme == "http" {
+			httpRequest.Header.Set("Expect", "100-continue")
+		}
 	}
 	client := c.Client
 	if client == nil {

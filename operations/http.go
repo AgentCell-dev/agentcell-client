@@ -181,6 +181,15 @@ func checkBaseURL(base *url.URL) error {
 	}
 }
 
+// CheckBaseURL is checkBaseURL, exported for other callers in this module that send a bearer (or
+// receive one) over a caller-supplied base URL and want the same plaintext refusal -- today that
+// is internal/cli/auth.go's login/logout/whoami flows, which hit /v1/auth/* rather than
+// /v1/operations/<verb> and so do not go through HTTPClient at all. operations/ carries no pin
+// (unlike contract/, which infra's scripts/contract-pin.py holds byte for byte), so this is a
+// plain export rather than a restatement: one check, one place it is written, two packages that
+// call it.
+func CheckBaseURL(base *url.URL) error { return checkBaseURL(base) }
+
 // How hard the client tries when the service says it is busy. See doWithRetry.
 const (
 	busyRetries  = 2

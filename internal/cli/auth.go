@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/AgentCell-dev/agentcell-client/contract"
+	"github.com/AgentCell-dev/agentcell-client/operations"
 )
 
 // DefaultLoginBaseURL is where `agentcell login` sends a person's browser, and where a device
@@ -176,6 +177,15 @@ func WhoamiText(w *WhoamiResult) string {
 // cfg.IsTTY is false (SIGNUP.md §5: "--no-browser (and any TTY without a browser: SSH sessions,
 // containers) switches to the device path").
 func Login(ctx context.Context, cfg AuthConfig) (*LoginResult, *AuthError) {
+	// THE LOGIN BASE NEVER GOES THROUGH doJSON -- the loopback flow only ever OPENS it in a
+	// browser (there is no bearer to leak on that particular request, since none exists yet),
+	// and the device flow only joins it into a URL it prints. Neither call site is doJSON's
+	// per-request check below, so it is checked once, here, before either flow starts: a
+	// plaintext login base is still a misconfiguration worth refusing with the same typed hint
+	// operations.CheckBaseURL gives every other caller-supplied base in this client.
+	if apiErr := checkBase(cfg.LoginBaseURL); apiErr != nil {
+		return nil, apiErr
+	}
 	if cfg.NoBrowser || !cfg.IsTTY {
 		return loginDevice(ctx, cfg)
 	}
@@ -447,10 +457,31 @@ func getJSON(ctx context.Context, cfg AuthConfig, base, path, bearer string, out
 	return doJSON(ctx, cfg, http.MethodGet, base, path, nil, bearer, out)
 }
 
+// checkBase refuses a caller-supplied base URL the same way operations.CheckBaseURL refuses one
+// for the eleven operation verbs: https always allowed, plain http only for a Tailscale overlay
+// address or loopback. /v1/auth/exchange and /v1/auth/poll HAND OVER a token in the response body
+// and /v1/auth/whoami and /v1/auth/logout PRESENT one as a bearer, so this base is exactly as
+// sensitive as operations.HTTPClient's, and it is checked before any request is built -- a
+// refusal here costs no socket and touches no network, the same property checkBaseURL's own
+// caller relies on.
+func checkBase(raw string) *AuthError {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return authErr(contract.CodeUsage, "invalid URL", "set AGENTCELL_API_URL/--api-url or AGENTCELL_LOGIN_URL/--login-url to a valid https:// address")
+	}
+	if err := operations.CheckBaseURL(parsed); err != nil {
+		return &AuthError{APIError: contract.AsAPIError(err)}
+	}
+	return nil
+}
+
 // doJSON sends one request and, on a 503 typed `service_unavailable` carrying a valid
 // `Retry-After`, retries -- bounded the same way operations/http.go's doWithRetry is bounded. See
 // the constants above for why the numbers are restated rather than imported.
 func doJSON(ctx context.Context, cfg AuthConfig, method, base, path string, body any, bearer string, out any) *AuthError {
+	if apiErr := checkBase(base); apiErr != nil {
+		return apiErr
+	}
 	var encoded []byte
 	if body != nil {
 		b, err := json.Marshal(body)

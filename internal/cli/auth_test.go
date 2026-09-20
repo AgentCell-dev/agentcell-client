@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -18,6 +19,19 @@ import (
 )
 
 const testToken = "act_testprefix_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+
+// roundTripFunc lets a test answer an HTTP request without a real socket, the same shape
+// operations/http_test.go uses (unexported there, so restated rather than imported).
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func fakeJSONResponse(status int, value any) *http.Response {
+	b, _ := json.Marshal(value)
+	header := make(http.Header)
+	header.Set(contract.APIVersionHeader, contract.APIVersion)
+	return &http.Response{StatusCode: status, Header: header, Body: io.NopCloser(bytes.NewReader(b))}
+}
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set(contract.APIVersionHeader, contract.APIVersion)
@@ -378,5 +392,59 @@ func TestRetryAfterAboveCapIsNotHonoured(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&calls); got != 1 {
 		t.Fatalf("calls=%d, want exactly 1 (no retry above the cap)", got)
+	}
+}
+
+// TestPlaintextPublicBaseIsRefusedWithNoRequestSent is the negative control for the fix folded
+// into doJSON/checkBase: a plain-http base outside the Tailscale overlay and loopback must be
+// refused BEFORE any request is sent, the same property loginLoopback's wrong-state test holds
+// for /v1/auth/exchange. The RoundTripper fails the test outright if it is ever invoked, which is
+// how "zero hits" is checked -- not by counting after the fact, which a bug that also drops the
+// counter would defeat.
+func TestPlaintextPublicBaseIsRefusedWithNoRequestSent(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		t.Fatalf("a request was sent to %s despite the base URL failing the plaintext check", r.URL)
+		return nil, nil
+	})
+	cfg := AuthConfig{APIBaseURL: "http://203.0.113.9", HTTPClient: &http.Client{Transport: transport}}
+	_, apiErr := Whoami(context.Background(), cfg, testToken)
+	if apiErr == nil || apiErr.Code != contract.CodeUsage {
+		t.Fatalf("expected a usage refusal for a plaintext public base, got %+v", apiErr)
+	}
+}
+
+// TestPlaintextTailnetBaseIsAllowed: 100.64.0.0/10 is the Tailscale overlay range and plain http
+// there is not plaintext on any network (operations/http.go's checkBaseURL comment). The base is
+// http:// and the request must still go out.
+func TestPlaintextTailnetBaseIsAllowed(t *testing.T) {
+	var reached bool
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		reached = true
+		return fakeJSONResponse(http.StatusOK, whoamiResponse{Email: "a@example.com", OrgID: "u-1", Plan: "design-partner", Scopes: []string{"read"}}), nil
+	})
+	cfg := AuthConfig{APIBaseURL: "http://100.64.0.10:4680", HTTPClient: &http.Client{Transport: transport}}
+	_, apiErr := Whoami(context.Background(), cfg, testToken)
+	if apiErr != nil {
+		t.Fatalf("a Tailscale overlay base over http must be allowed: %+v", apiErr)
+	}
+	if !reached {
+		t.Fatal("the request was never sent")
+	}
+}
+
+// TestHTTPSBaseIsAllowed: https is always allowed, any host.
+func TestHTTPSBaseIsAllowed(t *testing.T) {
+	var reached bool
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		reached = true
+		return fakeJSONResponse(http.StatusOK, whoamiResponse{Email: "a@example.com", OrgID: "u-1", Plan: "design-partner", Scopes: []string{"read"}}), nil
+	})
+	cfg := AuthConfig{APIBaseURL: "https://api.agentcell.cloud", HTTPClient: &http.Client{Transport: transport}}
+	_, apiErr := Whoami(context.Background(), cfg, testToken)
+	if apiErr != nil {
+		t.Fatalf("an https base must be allowed: %+v", apiErr)
+	}
+	if !reached {
+		t.Fatal("the request was never sent")
 	}
 }

@@ -246,6 +246,93 @@ func TestDeviceFlowPendingThenReady(t *testing.T) {
 	}
 }
 
+// TestDeviceStartSendsExplicitEmptyObject: the device start POST must carry the literal two bytes
+// `{}`, not an empty body -- belt and braces beside the server's own Content-Length: 0 fix, and
+// the same shape every other POST in this file already sends (loginDevice's own comment).
+func TestDeviceStartSendsExplicitEmptyObject(t *testing.T) {
+	var gotBody []byte
+	var gotContentLength int64
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/auth/device", func(w http.ResponseWriter, r *http.Request) {
+		gotBody, _ = io.ReadAll(r.Body)
+		gotContentLength = r.ContentLength
+		writeJSON(w, http.StatusOK, deviceStartResponse{DeviceCode: "d", UserCode: "u", VerificationURI: "/x", ExpiresIn: 30, Interval: 1})
+	})
+	mux.HandleFunc("/v1/auth/poll", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, pollResponse{Status: "ready", Token: testToken, OrgID: "o", Email: "a@b.com", Plan: "p"})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	cfg := AuthConfig{APIBaseURL: server.URL, LoginBaseURL: "https://login.example", NoBrowser: true}
+	if _, apiErr := Login(context.Background(), cfg); apiErr != nil {
+		t.Fatalf("device login refused: %+v", apiErr)
+	}
+	if string(gotBody) != "{}" {
+		t.Fatalf("device start body = %q, want the literal {}", gotBody)
+	}
+	if gotContentLength != 2 {
+		t.Fatalf("device start Content-Length = %d, want 2 (for the two bytes {})", gotContentLength)
+	}
+}
+
+// TestPollTolerates3Consecutive401sThenSucceeds: a run of up to three consecutive `unauthenticated`
+// poll responses (SIGNUP.md's confirmation-then-poll race, server-side fix pending) must not abort
+// the device flow -- the fourth poll succeeding proves the flow kept polling through all three.
+func TestPollTolerates3Consecutive401sThenSucceeds(t *testing.T) {
+	var polls int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/auth/device", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, deviceStartResponse{DeviceCode: "d", UserCode: "u", VerificationURI: "/x", ExpiresIn: 30, Interval: 1})
+	})
+	mux.HandleFunc("/v1/auth/poll", func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&polls, 1) <= 3 {
+			writeRefusal(w, http.StatusUnauthorized, contract.CodeUnauthenticated, "")
+			return
+		}
+		writeJSON(w, http.StatusOK, pollResponse{Status: "ready", Token: testToken, OrgID: "o", Email: "a@b.com", Plan: "p"})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	cfg := AuthConfig{APIBaseURL: server.URL, LoginBaseURL: "https://login.example", NoBrowser: true}
+	result, apiErr := Login(context.Background(), cfg)
+	if apiErr != nil {
+		t.Fatalf("should have tolerated 3 consecutive 401s and kept polling: %+v", apiErr)
+	}
+	if result.Token != testToken {
+		t.Fatalf("result=%+v", result)
+	}
+	if got := atomic.LoadInt32(&polls); got != 4 {
+		t.Fatalf("polls=%d, want exactly 4 (3 tolerated + 1 that succeeded)", got)
+	}
+}
+
+// TestPollGivesUpOnFourthConsecutive401: the fourth consecutive `unauthenticated` poll must abort
+// the flow rather than retry forever -- the tolerance is bounded, not unconditional.
+func TestPollGivesUpOnFourthConsecutive401(t *testing.T) {
+	var polls int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/auth/device", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, deviceStartResponse{DeviceCode: "d", UserCode: "u", VerificationURI: "/x", ExpiresIn: 30, Interval: 1})
+	})
+	mux.HandleFunc("/v1/auth/poll", func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&polls, 1)
+		writeRefusal(w, http.StatusUnauthorized, contract.CodeUnauthenticated, "")
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	cfg := AuthConfig{APIBaseURL: server.URL, LoginBaseURL: "https://login.example", NoBrowser: true}
+	_, apiErr := Login(context.Background(), cfg)
+	if apiErr == nil {
+		t.Fatal("expected the device flow to give up after 4 consecutive 401s")
+	}
+	if got := atomic.LoadInt32(&polls); got != 4 {
+		t.Fatalf("polls=%d, want exactly 4 (3 tolerated + 1 that gave up)", got)
+	}
+}
+
 // TestServiceUnavailableHonoursRetryAfter: a 503 service_unavailable carrying Retry-After must be
 // retried after that many seconds, transparently to the caller -- the same contract
 // operations/http.go's doWithRetry already holds for the eleven operation verbs.
@@ -475,5 +562,28 @@ func TestHTTPSBaseIsAllowed(t *testing.T) {
 	}
 	if !reached {
 		t.Fatal("the request was never sent")
+	}
+}
+
+// TestWhoamiResultJSONShapeMatchesWire: `agentcell whoami --output=json`, or the non-TTY default,
+// must encode the same field names a scripted caller expects (email, org_id, ... -- the wire
+// shape whoamiResponse already carries), not Go's capitalised defaults.
+func TestWhoamiResultJSONShapeMatchesWire(t *testing.T) {
+	result := &WhoamiResult{
+		Email: "a@b.com", OrgID: "o1", OrgKind: "personal", Plan: "design-partner",
+		Scopes: []string{"deploy", "read"}, IssuedVia: "login", TokenPrefix: "act_abc",
+	}
+	b, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	got := string(b)
+	for _, field := range []string{`"email"`, `"org_id"`, `"org_kind"`, `"plan"`, `"scopes"`, `"issued_via"`, `"token_prefix"`} {
+		if !strings.Contains(got, field) {
+			t.Errorf("whoami JSON %s missing field %s", got, field)
+		}
+	}
+	if strings.Contains(got, `"Email"`) || strings.Contains(got, `"OrgID"`) {
+		t.Fatalf("whoami JSON uses Go field names instead of the wire shape: %s", got)
 	}
 }

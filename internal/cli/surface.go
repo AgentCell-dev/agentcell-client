@@ -146,13 +146,98 @@ func JSONValues(arguments map[string]any) (map[string][]string, *contract.APIErr
 	return values, nil
 }
 
+// SessionCommand is one of the six commands cmd/agentcell dispatches BEFORE it ever builds a
+// contract.Request: login, logout, whoami, auth token, mcp and version. None of them is a
+// contract.Definition -- login runs before a bearer token exists to build one with, mcp opens a
+// stdio server rather than making a request, and version needs no request or response type at all
+// -- so none of them showed up in Help() or had a Run() `help <name>` entry: `agentcell help`
+// listed only the eleven operations and `agentcell help login` fell through to that same generic
+// listing. This is their visibility, kept beside Commands()/Help()/OperationHelp() rather than
+// duplicated in cmd/agentcell, which is the one place that actually dispatches them.
+type SessionCommand struct {
+	// Name is the lookup key: what a caller types as `agentcell <Name>` and `agentcell help
+	// <Name>`. "auth" rather than "auth token", because "agentcell help auth" is what a reader
+	// who has seen "auth token" in the summary line actually types.
+	Name, Summary, Usage string
+}
+
+// SessionCommands is the fixed list, in the get-started order: login before anything that needs a
+// stored token, whoami/logout beside it, the machine-token path, then the two standalone commands.
+var SessionCommands = []SessionCommand{
+	{
+		Name: "login", Summary: "Sign in as a person and store an API token (browser, or --no-browser for a device code)",
+		Usage: "Usage: agentcell login [--no-browser]\n\n" +
+			"Opens a browser to sign in (Google, GitHub, or a one-time email PIN) and stores the API\n" +
+			"token this CLI receives; the token itself is never printed. --no-browser prints a URL and\n" +
+			"an eight-character code to type on any device with a browser instead. First login creates\n" +
+			"a personal organisation. See docs/credentials.md.\n",
+	},
+	{
+		Name: "logout", Summary: "Revoke the stored token and remove it locally",
+		Usage: "Usage: agentcell logout\n\n" +
+			"Revokes the current token server-side, then removes it from local storage either way -- a\n" +
+			"token the server had already invalidated is still removed locally.\n",
+	},
+	{
+		Name: "whoami", Summary: "Show who the stored token is signed in as",
+		Usage: "Usage: agentcell whoami [--output=auto|human|json]\n\n" +
+			"Prints email, org, plan, scopes, how the token was issued, and the token's prefix -- never\n" +
+			"the token itself. Human-readable on a terminal, JSON otherwise, the same rule every other\n" +
+			"command follows.\n",
+	},
+	{
+		Name: "auth", Summary: "Store a token piped on stdin (auth token; a machine credential)",
+		Usage: "Usage: agentcell auth token\n\n" +
+			"Reads a token from stdin and stores it -- for a machine credential an operator minted\n" +
+			"(`make cp-token-issue`), not for a person (use `agentcell login` instead). Contacts no\n" +
+			"service; storage only.\n",
+	},
+	{
+		Name: "mcp", Summary: "Run the MCP server over stdio for coding agents",
+		Usage: "Usage: agentcell mcp\n\n" +
+			"Serves the same operations `agentcell` exposes as CLI commands as MCP tools over stdio, for\n" +
+			"a coding agent's harness to call. Needs a stored token first (agentcell login or agentcell\n" +
+			"auth token). See docs/mcp-harness.md.\n",
+	},
+	{
+		Name: "version", Summary: "Print the client and API version",
+		Usage: "Usage: agentcell version\n\n" +
+			"Prints the client's build version and the API version this build speaks (the\n" +
+			"AgentCell-Version header every request carries). Contacts no service and needs no token.\n",
+	},
+}
+
+// SessionCommandHelp looks up name's per-command usage, as SessionCommands' Name field (so "auth",
+// not "auth token"). The second result is false for anything not in that fixed list.
+func SessionCommandHelp(name string) (string, bool) {
+	for _, command := range SessionCommands {
+		if command.Name == name {
+			return command.Usage, true
+		}
+	}
+	return "", false
+}
+
+// sessionCommandLabel is what Help() prints in its listing column: "auth token" rather than just
+// "auth", so the summary line reads the same as what a caller actually types.
+func sessionCommandLabel(command SessionCommand) string {
+	if command.Name == "auth" {
+		return "auth token"
+	}
+	return command.Name
+}
+
 func Help(definitions []contract.Definition) string {
 	var b strings.Builder
 	b.WriteString("Usage: agentcell [--output=auto|human|json] <operation> [arguments]\n\nOperations:\n")
 	for _, command := range Commands(definitions) {
 		fmt.Fprintf(&b, "  %-10s %s\n", command.Name, command.Summary)
 	}
-	b.WriteString("\nRun 'agentcell help <operation>' for arguments.\n")
+	b.WriteString("\nGetting started / session:\n")
+	for _, command := range SessionCommands {
+		fmt.Fprintf(&b, "  %-10s %s\n", sessionCommandLabel(command), command.Summary)
+	}
+	b.WriteString("\nRun 'agentcell help <operation>' for arguments; 'agentcell help <command>' for the session commands above.\n")
 	return b.String()
 }
 

@@ -37,6 +37,17 @@ warning can (SIGNUP.md §8 item 9 records this as a known, unavoidable
 residual of the device-authorization shape, not a defect of this
 implementation).
 
+### Open your app
+
+On first login your email is granted to your organisation's cell gate, so
+opening the printed URL for a cell you deployed asks you to sign in the same
+way you just did for `agentcell login`, then shows the app — there is
+nothing separate to set up. That is a person reaching their own cell in a
+browser; it is not the credential a program needs to reach one
+programmatically. **Machines reaching a cell need the gate's service token**
+(`agentcell share`, owner-scoped) — see §2 below for how that token differs
+from the API token above.
+
 A plan of `waitlist` means the org is not yet approved to deploy — `login`,
 `whoami`, `ps` and `logs` all work, and `deploy` answers a typed
 `plan_required` refusal until the owner approves the org.

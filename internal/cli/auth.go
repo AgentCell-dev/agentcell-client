@@ -144,15 +144,19 @@ func LoginMessage(result *LoginResult) string {
 	return msg
 }
 
-// WhoamiResult is /v1/auth/whoami's body (control-plane.py's auth_whoami).
+// WhoamiResult is /v1/auth/whoami's body (control-plane.py's auth_whoami). JSON tags match the
+// wire shape (whoamiResponse below) so `agentcell whoami --output=json` -- or the non-TTY default,
+// the same way `ps` and every other operation pick json over a terminal (README "Get started") --
+// encodes the same field names a caller scripting against this command already expects, rather
+// than Go's capitalised defaults.
 type WhoamiResult struct {
-	Email       string
-	OrgID       string
-	OrgKind     string
-	Plan        string
-	Scopes      []string
-	IssuedVia   string
-	TokenPrefix string
+	Email       string   `json:"email"`
+	OrgID       string   `json:"org_id"`
+	OrgKind     string   `json:"org_kind"`
+	Plan        string   `json:"plan"`
+	Scopes      []string `json:"scopes"`
+	IssuedVia   string   `json:"issued_via"`
+	TokenPrefix string   `json:"token_prefix"`
 }
 
 // WhoamiText renders a WhoamiResult for a person. It prints the PREFIX, never a token value --
@@ -348,8 +352,14 @@ type pollResponse struct {
 // loginDevice implements SIGNUP.md §5's device path, RFC 8628 shape: a server-issued device_code
 // that never enters a URL, a user_code the person types, and a poll at the returned interval.
 func loginDevice(ctx context.Context, cfg AuthConfig) (*LoginResult, *AuthError) {
+	// SENDS AN EXPLICIT `{}` RATHER THAN NO BODY, belt and braces: the server is being fixed to
+	// accept `Content-Length: 0` too, but every other POST in this file and in operations/http.go
+	// carries a JSON body, and a device start with none was observed reaching an intermediary
+	// that treats a bodyless POST differently from a POST with an empty object. `map[string]any{}`
+	// marshals to the literal two bytes `{}`, with Content-Length set from those bytes the normal
+	// way encoding/json + doJSON already do for every other call.
 	var started deviceStartResponse
-	if apiErr := postJSON(ctx, cfg, cfg.APIBaseURL, "/v1/auth/device", nil, "", &started); apiErr != nil {
+	if apiErr := postJSON(ctx, cfg, cfg.APIBaseURL, "/v1/auth/device", map[string]any{}, "", &started); apiErr != nil {
 		return nil, apiErr
 	}
 	loginBase := strings.TrimRight(cfg.LoginBaseURL, "/")
@@ -370,14 +380,30 @@ func loginDevice(ctx context.Context, cfg AuthConfig) (*LoginResult, *AuthError)
 	}
 	deadline := time.Now().Add(expiresIn)
 
+	// consecutive401s TOLERATES a single mid-flow race rather than aborting the whole device flow
+	// on it. The server is being fixed for the race that produces this (a confirmation landing
+	// and a poll reading stale state within the same window), but the client's own tolerance is
+	// cheap and belongs here regardless: up to three consecutive polls answering `unauthenticated`
+	// are treated as "not ready yet" and retried at the server's own interval, the same as a
+	// `pending` status. Any OTHER typed error (code_not_accepted, expired, ...) still aborts
+	// immediately -- only unauthenticated is a race symptom -- and a poll that succeeds resets the
+	// counter, so a flaky window never accumulates toward the cap across a long-lived poll.
+	consecutive401s := 0
+	const max401Retries = 3
 	for {
 		var poll pollResponse
 		apiErr := postJSON(ctx, cfg, cfg.APIBaseURL, "/v1/auth/poll", map[string]string{"device_code": started.DeviceCode}, "", &poll)
 		if apiErr != nil {
-			return nil, apiErr
-		}
-		if poll.Status == "ready" {
-			return &LoginResult{Token: poll.Token, Email: poll.Email, OrgID: poll.OrgID, Plan: poll.Plan, Scopes: poll.Scopes}, nil
+			if apiErr.Code == contract.CodeUnauthenticated && consecutive401s < max401Retries {
+				consecutive401s++
+			} else {
+				return nil, apiErr
+			}
+		} else {
+			consecutive401s = 0
+			if poll.Status == "ready" {
+				return &LoginResult{Token: poll.Token, Email: poll.Email, OrgID: poll.OrgID, Plan: poll.Plan, Scopes: poll.Scopes}, nil
+			}
 		}
 		if time.Now().After(deadline) {
 			return nil, authErr(contract.CodeService, "timed out waiting for the device sign-in", "run agentcell login --no-browser again")

@@ -31,6 +31,10 @@ func (r Runner) Run(ctx context.Context, args []string) int {
 				fmt.Fprint(r.out(), OperationHelp(definition))
 				return 0
 			}
+			if usage, ok := SessionCommandHelp(remaining[1]); ok {
+				fmt.Fprint(r.out(), usage)
+				return 0
+			}
 		}
 		fmt.Fprint(r.out(), Help(contract.Definitions))
 		return 0
@@ -67,6 +71,11 @@ func (r Runner) Run(ctx context.Context, args []string) int {
 	}
 	return 0
 }
+
+// ExtractOutput is extractOutput, exported so cmd/agentcell can honour --output=auto|human|json
+// for the session commands (whoami, ...) it dispatches before ever building a Runner -- the same
+// flag, parsed the same way, rather than a second copy that could drift from this one.
+func ExtractOutput(args []string) (string, []string, *contract.APIError) { return extractOutput(args) }
 
 func extractOutput(args []string) (string, []string, *contract.APIError) {
 	mode := "auto"

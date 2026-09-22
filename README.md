@@ -123,3 +123,5 @@ The dependency gate inspects the complete Go dependency graph and rejects the pr
 proves rejection. Surface parity is tested by appending one definition and requiring both CLI and
 MCP to gain it. Releases require exactly Go 1.25.5, cross-compile static binaries twice, compare the
 bytes, and publish `SHA256SUMS` beside them.
+
+[![M8ven Score](https://m8ven.ai/badge/mcp/agentcell-dev-agentcell-client-18mote)](https://m8ven.ai/mcp/agentcell-dev-agentcell-client-18mote)

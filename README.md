@@ -12,8 +12,8 @@ It needs no Docker, Python, or repository checkout at runtime.
    against `SHA256SUMS`, and put it on your `PATH` as `agentcell`:
 
    ```sh
-   curl -fsSLO https://github.com/AgentCell-dev/agentcell-client/releases/download/v0.1.2/agentcell_darwin_arm64
-   curl -fsSLO https://github.com/AgentCell-dev/agentcell-client/releases/download/v0.1.2/SHA256SUMS
+   curl -fsSLO https://github.com/AgentCell-dev/agentcell-client/releases/download/v0.1.3/agentcell_darwin_arm64
+   curl -fsSLO https://github.com/AgentCell-dev/agentcell-client/releases/download/v0.1.3/SHA256SUMS
    grep agentcell_0.1.2_darwin_arm64 SHA256SUMS | shasum -a 256 -c -
    chmod +x agentcell_0.1.2_darwin_arm64 && mv agentcell_0.1.2_darwin_arm64 /usr/local/bin/agentcell
    ```
@@ -22,7 +22,7 @@ It needs no Docker, Python, or repository checkout at runtime.
    `mv agentcell_0.1.2_darwin_arm64 agentcell` (the `chmod +x` above still applies).
 
    Replace `darwin_arm64` with `darwin_amd64`, `linux_amd64`, `linux_arm64`, or `windows_amd64.exe`, and
-   `v0.1.2` with the newest tag on the [releases page](https://github.com/AgentCell-dev/agentcell-client/releases)
+   `v0.1.3` with the newest tag on the [releases page](https://github.com/AgentCell-dev/agentcell-client/releases)
    (the `latest` alias cannot carry a versioned filename, which is why the tag is spelled out).
    Or, with Go 1.25 installed: `go install github.com/AgentCell-dev/agentcell-client/cmd/agentcell@latest`.
 

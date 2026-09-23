@@ -27,15 +27,20 @@ separate setup step (see "Open your app" below).
 
 If your terminal has no browser — an SSH session, a container, a CI runner
 used interactively — run `agentcell login --no-browser`. The CLI prints a
-short URL and an eight-character code; open that URL on any device that does
-have a browser, sign in there, and type the code.
+link, then an eight-character code, then a plain URL. Open the link on any
+device that does have a browser and sign in there; the page shows the code
+it is about to authorise. Compare the code with the one in your terminal and,
+if they match, press Authorise — the terminal finishes logging in by itself.
+If you cannot follow the link (a screenshot, a hardware terminal), open the
+plain URL instead and type the code.
 
-**The one thing to know before you type a code on that page:** type a code
-only if it came from a terminal you are looking at yourself. A code somebody
-else sends you and asks you to enter signs THEM in as you — the same risk
-`gcloud auth login` and `gh auth login --web` carry with their own device
-codes. No link the CLI prints can do this on its own; only a person's own
-typing past the page's warning can.
+**The one thing to know before you press Authorise on that page:** press
+Authorise only if a terminal in front of you is showing that code. A link or
+code somebody else sends you and asks you to approve signs THEM in as you —
+the same risk `gcloud auth login` and `gh auth login --web` carry with their
+own device codes. Opening the link does nothing on its own; only a person
+pressing Authorise past the page's warning does. If you did not start the
+login, press Cancel on that page: the code stops working for everyone.
 
 ## Open your app
 

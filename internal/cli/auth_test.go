@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -273,6 +274,221 @@ func TestDeviceStartSendsExplicitEmptyObject(t *testing.T) {
 	}
 	if gotContentLength != 2 {
 		t.Fatalf("device start Content-Length = %d, want 2 (for the two bytes {})", gotContentLength)
+	}
+}
+
+// deviceStub is a control plane that answers POST /v1/auth/device with `start` (a raw map, so a
+// test can send a field deviceStartResponse does not know about, or leave one out entirely, the
+// way an older control plane does), answers the first poll `ready`, and RECORDS EVERY REQUEST it
+// receives -- path, query and body -- so a test can assert on what the client sent and on what it
+// did NOT fetch. Anything that is neither the start nor the poll (a GET of the verify page, which
+// is what fetching the complete link would be) is recorded and answered 404, never 200: a client
+// that fetched it must not be able to mistake the answer for success.
+type deviceStub struct {
+	server *httptest.Server
+	mu     sync.Mutex
+	seen   []string // "<METHOD> <path>?<query>" per request, in order
+	start  []byte   // the body of the last POST /v1/auth/device
+}
+
+func newDeviceStub(t *testing.T, start map[string]any) *deviceStub {
+	t.Helper()
+	stub := &deviceStub{}
+	stub.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		stub.mu.Lock()
+		stub.seen = append(stub.seen, r.Method+" "+r.URL.RequestURI())
+		stub.mu.Unlock()
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/auth/device":
+			stub.mu.Lock()
+			stub.start = body
+			stub.mu.Unlock()
+			writeJSON(w, http.StatusOK, start)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/auth/poll":
+			writeJSON(w, http.StatusOK, pollResponse{Status: "ready", Token: testToken, OrgID: "u-device1", Email: "dev@example.com", Plan: "design-partner"})
+		default:
+			writeRefusal(w, http.StatusNotFound, contract.CodeNotFound, "")
+		}
+	}))
+	t.Cleanup(stub.server.Close)
+	return stub
+}
+
+func (s *deviceStub) requests() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.seen...)
+}
+
+// deviceSecret is the device_code every device-path test below hands out. It is what the poll
+// presents and must never reach a terminal (SIGNUP.md §5; DEVICE-FLOW.md §3 "must never show").
+const deviceSecret = "server-issued-device-secret-7f3a"
+
+// TestDeviceCompleteLinkPrintedFirstThenCodeThenPlainURL is DEVICE-FLOW.md §2.6: a control plane
+// that answers `verification_uri_complete` gets its complete link printed FIRST, on its own line
+// (the thing to use), then the user code on its own line (RFC 8628 §3.3.1: still displayed, and
+// comparing it with the page is the mitigation), then the plain URL as the fallback for a person
+// who cannot follow a link. The whole stderr is compared byte for byte, because the order IS the
+// property; a Contains check would pass a client that printed the lines the other way round.
+// Observed failing against f67de24, which printed only its one "go to ... and enter this code"
+// line and ignored the field.
+func TestDeviceCompleteLinkPrintedFirstThenCodeThenPlainURL(t *testing.T) {
+	stub := newDeviceStub(t, map[string]any{
+		"device_code": deviceSecret, "user_code": "ABCD2345",
+		"verification_uri":          "https://login.example/v1/auth/device/verify",
+		"verification_uri_complete": "https://login.example/v1/auth/device/verify?user_code=ABCD2345",
+		"expires_in":                600, "interval": 1,
+	})
+	var stdout, stderr bytes.Buffer
+	cfg := AuthConfig{APIBaseURL: stub.server.URL, LoginBaseURL: "https://login.example", NoBrowser: true, Stdout: &stdout, Stderr: &stderr}
+	if _, apiErr := Login(context.Background(), cfg); apiErr != nil {
+		t.Fatalf("device login refused: %+v", apiErr)
+	}
+	want := "open this link on any device with a browser, sign in, and press Authorise:\n" +
+		"  https://login.example/v1/auth/device/verify?user_code=ABCD2345\n" +
+		"the page will show this code; approve only if it matches:  ABCD2345\n" +
+		"no link? go to https://login.example/v1/auth/device/verify and enter the code\n" +
+		"waiting for you to finish signing in ...\n"
+	if got := stderr.String(); got != want {
+		t.Fatalf("device path printed\n%s\nwant (complete link first, then the code, then the plain URL)\n%s", got, want)
+	}
+	if strings.Contains(stdout.String()+stderr.String(), deviceSecret) {
+		t.Fatal("the device code must never be printed, only the user code")
+	}
+}
+
+// TestDeviceWithoutCompleteLinkPrintsWhat012Prints is the regression guard for the converge window
+// DEVICE-FLOW.md §2.6 names: an older control plane omits `verification_uri_complete`, and the
+// client must print EXACTLY what v0.1.2 printed against it -- the field is absent, not
+// empty-and-fatal. `want` is the byte string f67de24 (v0.1.2) was observed printing against this
+// same stub, not a reconstruction. An empty string is treated the same as absent: a server that
+// sends the key with no value has not given the client a link to print.
+func TestDeviceWithoutCompleteLinkPrintsWhat012Prints(t *testing.T) {
+	for name, start := range map[string]map[string]any{
+		"absent": {"device_code": deviceSecret, "user_code": "ABCD1234", "verification_uri": "/v1/auth/device/verify", "expires_in": 600, "interval": 1},
+		"empty":  {"device_code": deviceSecret, "user_code": "ABCD1234", "verification_uri": "/v1/auth/device/verify", "verification_uri_complete": "", "expires_in": 600, "interval": 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			stub := newDeviceStub(t, start)
+			var stdout, stderr bytes.Buffer
+			cfg := AuthConfig{APIBaseURL: stub.server.URL, LoginBaseURL: "https://login.example", NoBrowser: true, Stdout: &stdout, Stderr: &stderr}
+			if _, apiErr := Login(context.Background(), cfg); apiErr != nil {
+				t.Fatalf("device login refused: %+v", apiErr)
+			}
+			want := "go to https://login.example/v1/auth/device/verify and enter this code: ABCD1234\n" +
+				"waiting for you to finish signing in ...\n"
+			if got := stderr.String(); got != want {
+				t.Fatalf("against a control plane without verification_uri_complete the client printed\n%q\nwant v0.1.2's bytes\n%q", got, want)
+			}
+			if stdout.Len() != 0 {
+				t.Fatalf("the device path wrote to stdout: %q", stdout.String())
+			}
+		})
+	}
+}
+
+// TestDeviceCompleteLinkIsNeverOpenedOrFetched is DEVICE-FLOW.md §2.6's "the client never opens the
+// complete URL itself": the person's click on the platform's page is what authorises, and a
+// client that followed the link would be the loopback path with a worse redirect. The login base
+// IS the stub, and the complete URI is relative, so the joined link points at the stub: a fetch
+// would be recorded there, and both openers (the injected one and the package default) fail the
+// test outright if called. BrowserReachable answers true so the only thing keeping this on the
+// device path is --no-browser, which must keep its meaning. The positive control is in the same
+// test: the joined link IS printed, and the stub DID see exactly the start and one poll.
+func TestDeviceCompleteLinkIsNeverOpenedOrFetched(t *testing.T) {
+	stub := newDeviceStub(t, map[string]any{
+		"device_code": deviceSecret, "user_code": "WXYZ6789",
+		"verification_uri":          "/v1/auth/device/verify",
+		"verification_uri_complete": "/v1/auth/device/verify?user_code=WXYZ6789",
+		"expires_in":                600, "interval": 1,
+	})
+	savedOpener := defaultOpenBrowser
+	defaultOpenBrowser = func(target string) error {
+		t.Errorf("the package default browser opener was called with %s on the device path", target)
+		return nil
+	}
+	defer func() { defaultOpenBrowser = savedOpener }()
+	var stderr bytes.Buffer
+	cfg := AuthConfig{
+		APIBaseURL: stub.server.URL, LoginBaseURL: stub.server.URL, NoBrowser: true, Stderr: &stderr,
+		BrowserReachable: func() bool { return true },
+		OpenBrowser: func(target string) error {
+			t.Errorf("the device path opened %s; only the person's own click may", target)
+			return nil
+		},
+	}
+	if _, apiErr := Login(context.Background(), cfg); apiErr != nil {
+		t.Fatalf("device login refused: %+v", apiErr)
+	}
+	if !strings.Contains(stderr.String(), "  "+stub.server.URL+"/v1/auth/device/verify?user_code=WXYZ6789\n") {
+		t.Fatalf("positive control: the relative complete link was not joined to the login base and printed:\n%s", stderr.String())
+	}
+	got := stub.requests()
+	for _, seen := range got {
+		if strings.Contains(seen, "/v1/auth/device/verify") {
+			t.Fatalf("the client fetched the verify page itself (%s); requests seen: %v", seen, got)
+		}
+	}
+	if want := []string{"POST /v1/auth/device", "POST /v1/auth/poll"}; strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("requests seen = %v, want exactly %v", got, want)
+	}
+	if strings.Contains(stderr.String(), deviceSecret) {
+		t.Fatal("the device code must never be printed, only the user code")
+	}
+}
+
+// TestDeviceStartSendsBoundedClientName is DEVICE-FLOW.md §2.6's start body: `{"client": ...}`
+// when the name is within the server's §1.5 bound, and exactly v0.1.2's `{}` when it is not --
+// dropped, never truncated, the same rule the server applies. Content-Length must match the bytes
+// sent (the framing property TestDeviceStartSendsExplicitEmptyObject was written for: never a
+// chunked or bodyless start). The first case is the positive control: the name cmd/agentcell
+// actually builds, for a release version, IS sent. Observed failing with loginDevice's body put
+// back to f67de24's `map[string]any{}`.
+func TestDeviceStartSendsBoundedClientName(t *testing.T) {
+	built := DeviceClientName("0.1.3")
+	cases := []struct {
+		name, client, wantBody string
+	}{
+		{"release build", built, `{"client":"` + built + `"}`},
+		{"dev build", DeviceClientName("dev"), `{"client":"` + DeviceClientName("dev") + `"}`},
+		{"64 characters", "a" + strings.Repeat("b", 63), `{"client":"a` + strings.Repeat("b", 63) + `"}`},
+		{"65 characters", "a" + strings.Repeat("b", 64), `{}`},
+		{"version too long for the bound", DeviceClientName(strings.Repeat("9", 60)), `{}`},
+		{"markup", "<script>alert(1)</script>", `{}`},
+		{"newline", "agentcell/0.1.3\nlinux/amd64", `{}`},
+		{"leading space", " agentcell/0.1.3", `{}`},
+		{"empty", "", `{}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotBody []byte
+			var gotContentLength int64
+			var gotTE []string
+			mux := http.NewServeMux()
+			mux.HandleFunc("/v1/auth/device", func(w http.ResponseWriter, r *http.Request) {
+				gotBody, _ = io.ReadAll(r.Body)
+				gotContentLength = r.ContentLength
+				gotTE = r.TransferEncoding
+				writeJSON(w, http.StatusOK, deviceStartResponse{DeviceCode: "d", UserCode: "u", VerificationURI: "/x", ExpiresIn: 30, Interval: 1})
+			})
+			mux.HandleFunc("/v1/auth/poll", func(w http.ResponseWriter, r *http.Request) {
+				writeJSON(w, http.StatusOK, pollResponse{Status: "ready", Token: testToken, OrgID: "o", Email: "a@b.com", Plan: "p"})
+			})
+			server := httptest.NewServer(mux)
+			defer server.Close()
+
+			cfg := AuthConfig{APIBaseURL: server.URL, LoginBaseURL: "https://login.example", NoBrowser: true, ClientName: tc.client}
+			if _, apiErr := Login(context.Background(), cfg); apiErr != nil {
+				t.Fatalf("device login refused: %+v", apiErr)
+			}
+			if string(gotBody) != tc.wantBody {
+				t.Fatalf("device start body = %q, want %q", gotBody, tc.wantBody)
+			}
+			if gotContentLength != int64(len(gotBody)) || len(gotTE) != 0 {
+				t.Fatalf("device start framing: Content-Length=%d Transfer-Encoding=%v for %d bytes; want a matching Content-Length and no chunking", gotContentLength, gotTE, len(gotBody))
+			}
+		})
 	}
 }
 

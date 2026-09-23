@@ -168,9 +168,10 @@ var SessionCommands = []SessionCommand{
 		Name: "login", Summary: "Sign in as a person and store an API token (browser, or --no-browser for a device code)",
 		Usage: "Usage: agentcell login [--no-browser]\n\n" +
 			"Opens a browser to sign in (Google, GitHub, or a one-time email PIN) and stores the API\n" +
-			"token this CLI receives; the token itself is never printed. --no-browser prints a URL and\n" +
-			"an eight-character code to type on any device with a browser instead. First login creates\n" +
-			"a personal organisation. See docs/credentials.md.\n",
+			"token this CLI receives; the token itself is never printed. --no-browser prints a link and\n" +
+			"an eight-character code instead: open the link on any device with a browser, check the page\n" +
+			"shows the same code, and press Authorise. First login creates a personal organisation. See\n" +
+			"docs/credentials.md.\n",
 	},
 	{
 		Name: "logout", Summary: "Revoke the stored token and remove it locally",

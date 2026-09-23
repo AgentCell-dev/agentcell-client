@@ -25,6 +25,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -101,6 +102,13 @@ type AuthConfig struct {
 	// (including "no opener on this platform") does not abort the loopback flow -- the URL is
 	// printed instead, per "opens the browser (or print the URL when it cannot)".
 	OpenBrowser func(string) error
+
+	// ClientName is what the device start tells the control plane this program calls itself
+	// (DEVICE-FLOW.md §2.6: "agentcell/<version> <GOOS>/<GOARCH>", built by cmd/agentcell from its
+	// own linker-set version and nothing from the environment). The approve page shows it,
+	// labelled self-reported, because an attacker's CLI can send the same string. Empty, or not
+	// matching the server's own bound (deviceClientPattern), sends `{}` exactly as v0.1.2 did.
+	ClientName string
 
 	Stdout, Stderr io.Writer // nil uses io.Discard; cmd/agentcell wires os.Stdout/os.Stderr
 }
@@ -331,12 +339,54 @@ func randomState() (string, *AuthError) {
 // Device flow
 // ---------------------------------------------------------------------------------------------
 
+// deviceStartResponse is POST /v1/auth/device's answer. VerificationURIComplete (RFC 8628 §3.3.1,
+// DEVICE-FLOW.md §2.1) is OPTIONAL ON THE WIRE: a control plane from before 23 September omits it,
+// and during a converge window the client meets exactly that server, so absent (or empty) means
+// "print what v0.1.2 printed", never an error.
 type deviceStartResponse struct {
-	DeviceCode      string `json:"device_code"`
-	UserCode        string `json:"user_code"`
-	VerificationURI string `json:"verification_uri"`
-	ExpiresIn       int    `json:"expires_in"`
-	Interval        int    `json:"interval"`
+	DeviceCode              string `json:"device_code"`
+	UserCode                string `json:"user_code"`
+	VerificationURI         string `json:"verification_uri"`
+	VerificationURIComplete string `json:"verification_uri_complete,omitempty"`
+	ExpiresIn               int    `json:"expires_in"`
+	Interval                int    `json:"interval"`
+}
+
+// deviceClientPattern is the server's own acceptance rule for the start body's `client`
+// (DEVICE-FLOW.md §1.5, restated here rather than shared because the server is Python in another
+// repository): a leading alphanumeric, then up to 63 more of a small printable set. The server
+// DROPS a non-matching value rather than truncating it, so the client does the same before
+// sending -- a name the page would show as "did not identify itself" is not worth a byte on the
+// wire, and a truncated one would be a name nobody chose.
+var deviceClientPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 ._/()+-]{0,63}$`)
+
+// DeviceClientName is the ClientName cmd/agentcell passes: the program's name, its linker-set
+// version, and the platform it was built for (DEVICE-FLOW.md §2.6). All three are compiled in;
+// nothing is read from the environment, so nothing a person exported (a token, a hostname, a
+// username) can ride along to a page another person reads.
+func DeviceClientName(version string) string {
+	return "agentcell/" + version + " " + runtime.GOOS + "/" + runtime.GOARCH
+}
+
+// deviceStartBody is the device start's JSON body: `{"client": name}` when name is within the
+// bound, and the literal `{}` otherwise -- the shape v0.1.2 sent and loginDevice's comment below
+// explains.
+func deviceStartBody(name string) map[string]any {
+	if !deviceClientPattern.MatchString(name) {
+		return map[string]any{}
+	}
+	return map[string]any{"client": name}
+}
+
+// joinLoginBase makes a relative verification URI absolute against the login base, the one rule
+// both verification_uri and verification_uri_complete follow: the server leaves them relative
+// only when its own LOGIN_BASE_URL is unset (control-plane.py never guesses a host), and the
+// client never guesses one either -- it uses the base it was configured with.
+func joinLoginBase(loginBase, uri string) string {
+	if strings.HasPrefix(uri, "/") {
+		return loginBase + uri
+	}
+	return uri
 }
 
 type pollResponse struct {
@@ -350,24 +400,38 @@ type pollResponse struct {
 }
 
 // loginDevice implements SIGNUP.md §5's device path, RFC 8628 shape: a server-issued device_code
-// that never enters a URL, a user_code the person types, and a poll at the returned interval.
+// that never enters a URL, a user_code the person compares (or, against an older control plane,
+// types), and a poll at the returned interval.
 func loginDevice(ctx context.Context, cfg AuthConfig) (*LoginResult, *AuthError) {
-	// SENDS AN EXPLICIT `{}` RATHER THAN NO BODY, belt and braces: the server is being fixed to
-	// accept `Content-Length: 0` too, but every other POST in this file and in operations/http.go
-	// carries a JSON body, and a device start with none was observed reaching an intermediary
-	// that treats a bodyless POST differently from a POST with an empty object. `map[string]any{}`
-	// marshals to the literal two bytes `{}`, with Content-Length set from those bytes the normal
+	// SENDS AN EXPLICIT JSON OBJECT RATHER THAN NO BODY, belt and braces: the server is being
+	// fixed to accept `Content-Length: 0` too, but every other POST in this file and in
+	// operations/http.go carries a JSON body, and a device start with none was observed reaching
+	// an intermediary that treats a bodyless POST differently from a POST with an empty object.
+	// The object is `{"client": ...}` when cfg.ClientName is within the server's bound and the
+	// literal two bytes `{}` otherwise, with Content-Length set from the encoded bytes the normal
 	// way encoding/json + doJSON already do for every other call.
 	var started deviceStartResponse
-	if apiErr := postJSON(ctx, cfg, cfg.APIBaseURL, "/v1/auth/device", map[string]any{}, "", &started); apiErr != nil {
+	if apiErr := postJSON(ctx, cfg, cfg.APIBaseURL, "/v1/auth/device", deviceStartBody(cfg.ClientName), "", &started); apiErr != nil {
 		return nil, apiErr
 	}
 	loginBase := strings.TrimRight(cfg.LoginBaseURL, "/")
-	verificationURL := started.VerificationURI
-	if strings.HasPrefix(verificationURL, "/") {
-		verificationURL = loginBase + verificationURL
+	verificationURL := joinLoginBase(loginBase, started.VerificationURI)
+	// THE COMPLETE LINK IS PRINTED, NEVER OPENED OR FETCHED (DEVICE-FLOW.md §2.6). This path was
+	// chosen because no browser can be opened from here or the person said --no-browser; opening
+	// it anyway would be the loopback path with a worse redirect, and the one thing that may
+	// authorise this login is a person pressing Authorise on the platform's page. The order is
+	// the design's: the link first (the thing to use), the code on its own line (RFC 8628 §3.3.1:
+	// clients still display it, and comparing it with the page is the mitigation for a link an
+	// attacker sent), the plain URL last for a person who cannot follow a link. Without the field
+	// -- a control plane from before 23 September -- the v0.1.2 line, byte for byte.
+	if started.VerificationURIComplete != "" {
+		completeURL := joinLoginBase(loginBase, started.VerificationURIComplete)
+		fmt.Fprintf(cfg.err(), "open this link on any device with a browser, sign in, and press Authorise:\n  %s\n", completeURL)
+		fmt.Fprintf(cfg.err(), "the page will show this code; approve only if it matches:  %s\n", started.UserCode)
+		fmt.Fprintf(cfg.err(), "no link? go to %s and enter the code\n", verificationURL)
+	} else {
+		fmt.Fprintf(cfg.err(), "go to %s and enter this code: %s\n", verificationURL, started.UserCode)
 	}
-	fmt.Fprintf(cfg.err(), "go to %s and enter this code: %s\n", verificationURL, started.UserCode)
 	fmt.Fprintf(cfg.err(), "waiting for you to finish signing in ...\n")
 
 	interval := time.Duration(started.Interval) * time.Second

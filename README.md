@@ -33,8 +33,9 @@ It needs no Docker, Python, or repository checkout at runtime.
    agentcell login
    ```
 
-   On a machine without a browser, `agentcell login --no-browser` prints a URL and a code to type.
-   Only ever type a code that came from a terminal you are looking at.
+   On a machine without a browser, `agentcell login --no-browser` prints a link and a code: open
+   the link on any device, check the page shows the same code, and press Authorise. Only ever
+   press Authorise for a code a terminal in front of you is showing.
 
 3. **Deploy.** From a directory holding a `Dockerfile` (one container, listening on port 8080,
    with `/data` for anything that must survive a restart):

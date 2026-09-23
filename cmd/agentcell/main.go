@@ -177,6 +177,7 @@ func runLogin(args []string, apiBaseURL, loginBaseURL string, store token.Store)
 		APIBaseURL: apiBaseURL, LoginBaseURL: loginBaseURL,
 		NoBrowser: noBrowser, IsTTY: isTTY,
 		Stdout: os.Stdout, Stderr: os.Stderr,
+		ClientName: cli.DeviceClientName(version),
 	}
 	result, apiErr := cli.Login(context.Background(), cfg)
 	if apiErr != nil {

@@ -42,7 +42,9 @@ Rules that matter:
 - `deploy` takes `{"source": "<directory>", "cell": "<cell-id>"}`. The client
   archives the directory deterministically and derives
   `deploy-v1:<sha256>` as the idempotency key, so retrying a deploy from a new
-  process is safe. Only `logs` streams.
+  process is safe. Only `logs` streams. `deploy` also takes `"schedule": "<cron>"`
+  for a scheduled cell (README, "Scheduled cells"); it is not live yet, and when
+  set it is part of the idempotency key.
 - A token without the verb's scope is refused with `forbidden` (exit 11).
   Give the harness the narrowest scopes that cover its job — typically
   `deploy` + `read` — and keep `secrets`/`admin` tokens out of it

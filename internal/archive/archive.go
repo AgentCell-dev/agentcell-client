@@ -94,3 +94,19 @@ func Directory(root string) ([]byte, string, error) {
 	digest := fmt.Sprintf("%x", sha256.Sum256(buffer.Bytes()))
 	return buffer.Bytes(), "deploy-v1:" + digest, nil
 }
+
+// ScheduledKey is the deploy idempotency key once the request's schedule is known
+// (SCHEDULED-CELLS.md §2.2). The service replays a key it has seen as `unchanged`, so a key that
+// is a digest of the archive alone would replay `--schedule "0 3 * * *"` as the earlier
+// `--schedule "0 2 * * *"` of the same directory and the schedule would never change. With no
+// schedule the key is returned untouched -- byte-identical to 0.1.2's, so no web deploy stops
+// replaying across the upgrade -- and with one it gains `.s` and the first 16 hex of
+// sha256(schedule): still inside the service's `^[A-Za-z0-9:._-]{1,200}$`, and still leaving the
+// archive digest first after the colon, where the service takes a default cell id from it. The
+// service does not parse the key; it stays a handle.
+func ScheduledKey(archiveKey, schedule string) string {
+	if schedule == "" {
+		return archiveKey
+	}
+	return fmt.Sprintf("%s.s%x", archiveKey, sha256.Sum256([]byte(schedule)))[:len(archiveKey)+2+16]
+}

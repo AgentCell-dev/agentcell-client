@@ -20,6 +20,7 @@ type Operations interface {
 type DeployRequest struct {
 	Source         []byte `json:"source_tar_gzip" cli:"source,position=1,archive" description:"Application source directory"`
 	CellID         string `json:"cell_id,omitempty" cli:"cell" description:"Stable cell identifier; generated when omitted"`
+	Schedule       string `json:"schedule,omitempty" cli:"schedule" description:"Run the container to completion on this cron schedule (5 fields or @hourly/@daily/@weekly/@monthly, UTC, at most every 5 minutes) instead of serving HTTP; fixed for the life of the cell"`
 	IdempotencyKey string `json:"idempotency_key" cli:"-" description:"Derived from the source archive and honoured by the service"`
 }
 
@@ -28,8 +29,13 @@ func (DeployRequest) Operation() string { return "deploy" }
 type DeployResponse struct {
 	CellID       string `json:"cell_id"`
 	DeploymentID string `json:"deployment_id"`
-	URL          string `json:"url"`
-	Status       string `json:"status"`
+	URL          string `json:"url"`                   // "" for a scheduled cell: it has no hostname
+	Status       string `json:"status"`                // "deployed" | "unchanged" | "scheduled"
+	Kind         string `json:"kind,omitempty"`        // "web" | "scheduled"
+	Schedule     string `json:"schedule,omitempty"`    // the cron as the service accepted it
+	NextRunAt    string `json:"next_run_at,omitempty"` // RFC 3339 UTC, from Nomad's plan
+	Port         int    `json:"port,omitempty"`        // the container's port: the Dockerfile's EXPOSE, 8080 when absent
+	Hint         string `json:"hint,omitempty"`        // the service's note when a default was used
 }
 
 func (DeployResponse) operationResponse() {}
@@ -155,9 +161,15 @@ type PSResponse struct {
 func (PSResponse) operationResponse() {}
 
 type CellStatus struct {
-	CellID string `json:"cell_id"`
-	Status string `json:"status"`
-	URL    string `json:"url"`
+	CellID        string `json:"cell_id"`
+	Status        string `json:"status"`
+	URL           string `json:"url"`
+	Kind          string `json:"kind,omitempty"`
+	Schedule      string `json:"schedule,omitempty"`
+	LastRunAt     string `json:"last_run_at,omitempty"`
+	LastRunStatus string `json:"last_run_status,omitempty"` // running | succeeded | failed | timed_out | unplaced | unknown
+	LastExitCode  *int   `json:"last_exit_code,omitempty"`  // a pointer, so exit 0 is reportable and absent is absent
+	NextRunAt     string `json:"next_run_at,omitempty"`
 }
 
 type SpendRequest struct {

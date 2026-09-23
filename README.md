@@ -66,6 +66,15 @@ When stdout is a terminal output is human-readable; otherwise it is JSON. `--out
 overrides detection. `logs` is the one streaming operation and emits one JSON object per line in
 machine mode.
 
+**Scheduled cells — ships with the service change; not live yet.** `agentcell deploy --schedule
+"<cron>" .` runs the container to completion on a cadence instead of serving HTTP: five cron fields
+or `@hourly`/`@daily`/`@weekly`/`@monthly`, always UTC, at most once every 5 minutes. A scheduled
+cell has no URL; `/data` is kept between runs; `ps` reports the last run, its exit code and the next
+run, and `logs` shows the most recent run. The schedule is fixed for the life of the cell. This
+client already sends the field (the MCP `deploy` tool has the same `schedule` property), but the
+service does not read it yet: until the service side lands, a deploy with `--schedule` is deployed
+as an ordinary web cell. Do not use it until this paragraph loses its "not live yet".
+
 ## Credentials and the harness
 
 Two credentials open two different doors — an API token (`deploy`/`read`/
@@ -99,7 +108,9 @@ verbs. The MCP server does not weaken this rule despite holding a standing token
 - Idempotency: deterministic tar+gzip bytes are hashed as `deploy-v1:<sha256>` and sent both in the
   typed request and `Idempotency-Key`. The service must enforce uniqueness per organization and
   return the recorded deployment for a duplicate key. This survives an agent starting a new process
-  to retry; a random per-process key would not.
+  to retry; a random per-process key would not. A `--schedule` is part of the key
+  (`deploy-v1:<sha256>.s<first 16 hex of sha256(schedule)>`), so changing only the schedule is a new
+  deploy rather than a replay; without one the key is exactly as above.
 - Streaming: only `logs` is declared streaming. It uses newline-delimited JSON over HTTP and the
   separate `Operations.Stream` method.
 - Tokens: `AGENTCELL_TOKEN` wins. Otherwise the file is under `$XDG_CONFIG_HOME/agentcell`,

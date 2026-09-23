@@ -71,3 +71,22 @@ func TestDeployOutputCarriesPortAndHint(t *testing.T) {
 		t.Fatalf("output without a hint:\n%s", human.String())
 	}
 }
+
+// TestDeployOutputOmitsAnAbsentPort: a replay (`unchanged`) and a scheduled cell carry no port;
+// the human output must not print "port: 0". Positive control beside it: a port that was sent is.
+func TestDeployOutputOmitsAnAbsentPort(t *testing.T) {
+	var human bytes.Buffer
+	if err := render(&human, "human", &contract.DeployResponse{CellID: "c", DeploymentID: "d", URL: "https://c.invalid", Status: "unchanged"}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(human.String(), "port:") {
+		t.Fatalf("an absent port was printed:\n%s", human.String())
+	}
+	human.Reset()
+	if err := render(&human, "human", &contract.DeployResponse{CellID: "c", Status: "deployed", Port: 8080}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(human.String(), "port: 8080\n") {
+		t.Fatalf("a sent port was not printed:\n%s", human.String())
+	}
+}

@@ -109,10 +109,15 @@ func render(w io.Writer, mode string, value any) error {
 	v := reflect.Indirect(reflect.ValueOf(value))
 	t := v.Type()
 	for i := 0; i < v.NumField(); i++ {
-		name := t.Field(i).Tag.Get("json")
-		name = strings.Split(name, ",")[0]
+		tag := t.Field(i).Tag.Get("json")
+		name := strings.Split(tag, ",")[0]
 		if name == "" {
 			name = strings.ToLower(t.Field(i).Name)
+		}
+		// A field the service may omit is not printed as its zero value: a replay or a scheduled
+		// cell has no port, and "port: 0" would be a number nothing listens on.
+		if strings.Contains(tag, ",omitempty") && v.Field(i).IsZero() {
+			continue
 		}
 		field := v.Field(i).Interface()
 		switch typed := field.(type) {

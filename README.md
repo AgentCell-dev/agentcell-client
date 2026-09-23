@@ -71,9 +71,10 @@ machine mode.
 or `@hourly`/`@daily`/`@weekly`/`@monthly`, always UTC, at most once every 5 minutes. A scheduled
 cell has no URL; `/data` is kept between runs; `ps` reports the last run, its exit code and the next
 run, and `logs` shows the most recent run. The schedule is fixed for the life of the cell. This
-client already sends the field (the MCP `deploy` tool has the same `schedule` property), but the
-service does not read it yet: until the service side lands, a deploy with `--schedule` is deployed
-as an ordinary web cell. Do not use it until this paragraph loses its "not live yet".
+client already sends the field (the MCP `deploy` tool has the same `schedule` property), but a
+service older than the schedule support ignores it: against one, a deploy with `--schedule` is
+deployed as an ordinary web cell. That is why the client release carrying this flag waits for the
+service. Do not use it until this paragraph loses its "not live yet".
 
 ## Credentials and the harness
 

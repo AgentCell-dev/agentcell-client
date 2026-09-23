@@ -113,6 +113,12 @@ func Bind(definition contract.Definition, values map[string][]string, positional
 			return nil, usage("unsupported field --"+name, "report this client bug")
 		}
 	}
+	// The deploy key covers the schedule (SCHEDULED-CELLS.md §2.2). It is finished HERE, after the
+	// loop, because the archive field that sets it is bound before Schedule is; deriving it inside
+	// the archive branch would read an empty schedule and send two schedules the same key.
+	if keyField, schedule := v.FieldByName("IdempotencyKey"), v.FieldByName("Schedule"); keyField.IsValid() && schedule.IsValid() && keyField.String() != "" {
+		keyField.SetString(archivepkg.ScheduledKey(keyField.String(), schedule.String()))
+	}
 	if len(positionals) > positionalCount(definition.RequestType) {
 		return nil, usage("too many positional arguments", "run agentcell help "+definition.Name)
 	}

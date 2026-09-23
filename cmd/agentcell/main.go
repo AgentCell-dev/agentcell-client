@@ -54,11 +54,28 @@ func run() int {
 			i--
 		}
 	}
+	// ONLY THE COMMANDS THAT WRITE OR DELETE A STORED TOKEN NEED THE STORE: `auth token` and
+	// `login` write it, `logout` deletes it. Every other command only READS a token, and
+	// AGENTCELL_TOKEN answers that before the store is consulted (token.Resolver.Load). This used
+	// to refuse here, for every command, when the store could not be located -- so the infra
+	// onboarding canary's first live run (23 September 2026), a systemd oneshot with its token in
+	// its environment and no $HOME, was told `cannot locate token storage` about a store it never
+	// needed, and ran with `HOME=/root` as the workaround. Locating the store only computes a path;
+	// the refusal is now storeRefusal, called by the three commands that need one, and it names
+	// both ways out. A reader with no token AND no store is simply not logged in -- nothing can be
+	// stored where there is nowhere to store it -- and gets the same refusal an empty store gives.
 	store, storeErr := token.DefaultFileStore()
-	if storeErr != nil {
-		return printStartupError(&contract.APIError{Code: contract.CodeUnauthenticated, Message: "cannot locate token storage", Hint: storeErr.Error()})
+	storeRefusal := func() int {
+		return printStartupError(&contract.APIError{Code: contract.CodeUnauthenticated, Message: "cannot locate token storage", Hint: storeErr.Error() + "; set HOME, or use AGENTCELL_TOKEN for a read-only session"})
+	}
+	var readStore token.Store
+	if storeErr == nil {
+		readStore = store
 	}
 	if len(args) == 2 && args[0] == "auth" && args[1] == "token" {
+		if storeErr != nil {
+			return storeRefusal()
+		}
 		value, readErr := io.ReadAll(io.LimitReader(os.Stdin, 64*1024))
 		if readErr != nil {
 			return printStartupError(&contract.APIError{Code: contract.CodeInvalid, Message: "could not read token from stdin", Hint: "pipe the token to agentcell auth token"})
@@ -73,9 +90,12 @@ func run() int {
 	// the Load() below: a machine that has never authenticated has no store to load from yet,
 	// and Load()'s error would abort the process before this ever ran.
 	if len(args) > 0 && args[0] == "login" {
+		if storeErr != nil {
+			return storeRefusal()
+		}
 		return runLogin(args[1:], baseURL, loginBaseURL, store)
 	}
-	credential, err := (token.Resolver{Store: store}).Load()
+	credential, err := (token.Resolver{Store: readStore}).Load()
 	metaCommand := len(args) == 0 || args[0] == "help"
 	if err != nil && !metaCommand {
 		// THIS BRANCH FIRES EXACTLY WHEN NO CREDENTIAL IS STORED (Load() found neither
@@ -98,6 +118,11 @@ func run() int {
 		return 0
 	}
 	if len(args) > 0 && args[0] == "logout" {
+		// Refused BEFORE the server-side revoke, so a logout that could not clear the store
+		// never half-happens: the token stays valid and the caller is told why.
+		if storeErr != nil {
+			return storeRefusal()
+		}
 		return runLogout(baseURL, credential, store)
 	}
 	if len(args) > 0 && args[0] == "whoami" {

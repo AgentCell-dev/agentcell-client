@@ -15,6 +15,23 @@ import (
 	"time"
 )
 
+// skippedDirectories are left out of the archive wherever they appear, and only when they are real
+// directories: a file with one of these names is the user's and is sent, and a symlink with one is
+// refused below like any other symlink, so naming cannot slip one past that refusal. node_modules
+// is a dependency tree the build reinstalls from package.json and the lockfile; for a frontend
+// project it is routinely hundreds of MiB and tens of thousands of files, which trips the service's
+// archive limits (STATIC-CELLS.md §1). The dot-directories are the frontend tools' caches (Next.js,
+// SvelteKit, Turborepo, Parcel, Vite). What a build PRODUCES -- dist, build, out -- is deliberately
+// absent: a directory holding an already-built site is served as one, so it must arrive.
+var skippedDirectories = map[string]bool{
+	"node_modules":  true,
+	".next":         true,
+	".svelte-kit":   true,
+	".turbo":        true,
+	".parcel-cache": true,
+	".vite":         true,
+}
+
 // Directory creates deterministic tar+gzip bytes: stable order, timestamps,
 // uid/gid and gzip metadata. The digest is therefore a stable retry key.
 func Directory(root string) ([]byte, string, error) {
@@ -36,6 +53,9 @@ func Directory(root string) ([]byte, string, error) {
 				return filepath.SkipDir
 			}
 			return nil
+		}
+		if rel != "." && entry.IsDir() && skippedDirectories[entry.Name()] {
+			return filepath.SkipDir
 		}
 		if rel != "." {
 			paths = append(paths, path)

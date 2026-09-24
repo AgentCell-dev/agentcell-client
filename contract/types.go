@@ -31,10 +31,10 @@ type DeployResponse struct {
 	DeploymentID string `json:"deployment_id"`
 	URL          string `json:"url"`                   // "" for a scheduled cell: it has no hostname
 	Status       string `json:"status"`                // "deployed" | "unchanged" | "scheduled"
-	Kind         string `json:"kind,omitempty"`        // "web" | "scheduled"
+	Kind         string `json:"kind,omitempty"`        // "web" | "scheduled" | "static"
 	Schedule     string `json:"schedule,omitempty"`    // the cron as the service accepted it
 	NextRunAt    string `json:"next_run_at,omitempty"` // RFC 3339 UTC, from Nomad's plan
-	Port         int    `json:"port,omitempty"`        // the container's port: the Dockerfile's EXPOSE, 8080 when absent
+	Port         int    `json:"port,omitempty"`        // the container's port: the Dockerfile's EXPOSE, 8080 when absent; absent for a static cell, which has no process
 	Hint         string `json:"hint,omitempty"`        // the service's note when a default was used
 }
 
@@ -164,7 +164,7 @@ type CellStatus struct {
 	CellID        string `json:"cell_id"`
 	Status        string `json:"status"`
 	URL           string `json:"url"`
-	Kind          string `json:"kind,omitempty"`
+	Kind          string `json:"kind,omitempty"` // "web" | "scheduled" | "static"
 	Schedule      string `json:"schedule,omitempty"`
 	LastRunAt     string `json:"last_run_at,omitempty"`
 	LastRunStatus string `json:"last_run_status,omitempty"` // running | succeeded | failed | timed_out | unplaced | unknown

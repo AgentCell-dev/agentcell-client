@@ -12,17 +12,17 @@ It needs no Docker, Python, or repository checkout at runtime.
    against `SHA256SUMS`, and put it on your `PATH` as `agentcell`:
 
    ```sh
-   curl -fsSLO https://github.com/AgentCell-dev/agentcell-client/releases/download/v0.1.3/agentcell_0.1.3_darwin_arm64
-   curl -fsSLO https://github.com/AgentCell-dev/agentcell-client/releases/download/v0.1.3/SHA256SUMS
-   grep agentcell_0.1.3_darwin_arm64 SHA256SUMS | shasum -a 256 -c -
-   chmod +x agentcell_0.1.3_darwin_arm64 && mv agentcell_0.1.3_darwin_arm64 /usr/local/bin/agentcell
+   curl -fsSLO https://github.com/AgentCell-dev/agentcell-client/releases/download/v0.1.4/agentcell_0.1.4_darwin_arm64
+   curl -fsSLO https://github.com/AgentCell-dev/agentcell-client/releases/download/v0.1.4/SHA256SUMS
+   grep agentcell_0.1.4_darwin_arm64 SHA256SUMS | shasum -a 256 -c -
+   chmod +x agentcell_0.1.4_darwin_arm64 && mv agentcell_0.1.4_darwin_arm64 /usr/local/bin/agentcell
    ```
 
    Or keep it in the current directory and call `./agentcell`: skip the last `mv` and instead run
-   `mv agentcell_0.1.3_darwin_arm64 agentcell` (the `chmod +x` above still applies).
+   `mv agentcell_0.1.4_darwin_arm64 agentcell` (the `chmod +x` above still applies).
 
    Replace `darwin_arm64` with `darwin_amd64`, `linux_amd64`, `linux_arm64`, or `windows_amd64.exe`, and
-   `0.1.3` (in the tag and in the file name) with the newest release on the [releases page](https://github.com/AgentCell-dev/agentcell-client/releases)
+   `0.1.4` (in the tag and in the file name) with the newest release on the [releases page](https://github.com/AgentCell-dev/agentcell-client/releases)
    (the `latest` alias cannot carry a versioned filename, which is why the tag is spelled out).
    Or, with Go 1.25 installed: `go install github.com/AgentCell-dev/agentcell-client/cmd/agentcell@latest`.
 
@@ -37,8 +37,7 @@ It needs no Docker, Python, or repository checkout at runtime.
    the link on any device, check the page shows the same code, and press Authorise. Only ever
    press Authorise for a code a terminal in front of you is showing.
 
-3. **Deploy.** From a directory holding a `Dockerfile` (one container, listening on port 8080,
-   with `/data` for anything that must survive a restart):
+3. **Deploy.** From the directory holding your app:
 
    ```sh
    agentcell deploy --cell my-app .
@@ -47,30 +46,34 @@ It needs no Docker, Python, or repository checkout at runtime.
    The command prints the URL. `agentcell logs my-app` streams the app's output; `agentcell ps`
    lists your cells; `agentcell whoami` shows who you are logged in as.
 
-**Static sites — rolling out; ships with the service change.** `agentcell deploy` reads the root of
-the directory and uses the first of three shapes that matches:
+**What `deploy` accepts.** It reads the root of the directory and uses the first of three shapes
+that matches:
 
-- a `Dockerfile`: a container, as above;
-- a `package.json` with a `build` script: built on the platform (`npm ci` when `package-lock.json`
-  is present, otherwise `npm install`, then `npm run build`), and the first of `dist/`, `build/`
-  and `out/` that holds an `index.html` is served as a static site;
-- an `index.html`: the folder is served as-is, with no build.
+- a `Dockerfile`: one container, listening on the port its `EXPOSE` names (8080 when it names
+  none), with `/data` for anything that must survive a restart;
+- a `package.json` with a `build` script: a static site built on the platform (`npm ci` when
+  `package-lock.json` is present, otherwise `npm install`, then `npm run build`), serving the first
+  of `dist/`, `build/` and `out/` that holds an `index.html`. Vite, Create React App, Vue, Svelte
+  and Astro builds work this way;
+- an `index.html`: a static site served as-is, with no build.
 
 A static site gets the same private `https://<cell>.agentcell.cloud` hostname and sign-in as every
-cell, but has no container, port or `/data`; `agentcell logs --build` shows a built site's build
-output. `/about` serves `about/index.html` or `about.html`. A site with no `404.html` answers an
+cell, but no port or `/data`: the platform's edge serves the files and no container runs for it.
+`agentcell logs --build` shows a built site's build output. `/about` redirects to `/about/` when
+`about/index.html` exists, and otherwise serves `about.html`. A site with no `404.html` answers an
 unknown path with no file extension with `index.html`, so client-side routes in a single-page app
 work; add a `404.html` to turn that off. Files and folders whose names begin with `.` are not
 published, except `.well-known/`. In `package.json`,
 `"agentcell": {"output": "public", "spa": false}` overrides the output folder and the single-page
 fallback. Next.js needs `output: 'export'` in `next.config` (it writes `out/`) or a `Dockerfile`.
 The client leaves `node_modules/` and the `.next/`, `.svelte-kit/`, `.turbo/`, `.parcel-cache/` and
-`.vite/` caches out of every upload, at any depth, and sends `dist/`, `build/` and `out/`. Do not
-use static sites until this paragraph loses its "rolling out".
+`.vite/` caches out of every upload, at any depth, and sends `dist/`, `build/` and `out/` (0.1.4 and
+later; an older client uploads `node_modules/` and a frontend project usually exceeds the upload
+limit).
 
 Working examples to start from: [AgentCell-dev/samples](https://github.com/AgentCell-dev/samples)
-(a static site, a notes app on SQLite, a Go service, a Node worker), each a `Dockerfile` and a
-README.
+(plain HTML and a Vite + React app as static sites; a notes app on SQLite, a Go service, a Node
+worker, Next.js, FastAPI and Streamlit as containers), each with a README.
 
 **For coding agents:** `agentcell mcp` is an MCP server over stdio exposing the same operations as
 tools; log in once with `agentcell login` and point your agent's MCP configuration at the binary.
